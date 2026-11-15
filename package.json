@@ -1,0 +1,20 @@
+{
+  "name": "ddz-arena",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/engine", "packages/server", "packages/web"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p packages/engine && tsc -p packages/server",
+    "build": "npm run build -w packages/web",
+    "start": "node packages/server/src/main.ts",
+    "dev:server": "node --watch packages/server/src/main.ts",
+    "dev:web": "npm run dev -w packages/web"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": { "node": ">=22.18" }
+}

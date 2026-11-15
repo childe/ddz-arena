@@ -1,0 +1,18 @@
+[Unit]
+Description=Dou Dizhu bot arena
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/ddz
+EnvironmentFile=/etc/ddz.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning packages/server/src/main.ts
+Restart=always
+RestartSec=2
+MemoryMax=600M
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

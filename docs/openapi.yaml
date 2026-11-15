@@ -1,0 +1,545 @@
+openapi: 3.1.0
+info:
+  title: 斗地主 Bot Arena API
+  version: 1.0.0
+  description: |
+    HTTP API for Dou Dizhu bots. Real-time events are pushed over WebSocket (not describable in OpenAPI):
+    players connect to `/ws?token=<token>&since=<seq>`, spectators to `/ws/spectate?room=<rid>&since=<seq>`.
+    See /api/v1/docs (docs/api.md) for the event list, rules and a step-by-step bot guide.
+servers:
+  - url: http://43.128.99.230/api/v1
+security:
+  - bearer: []
+
+paths:
+  /bots:
+    post:
+      operationId: registerBot
+      summary: Register a bot (token is returned once)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { $ref: '#/components/schemas/Name' }
+                invite_code: { type: string }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Account' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /guests:
+    post:
+      operationId: registerGuest
+      summary: Create a human guest account (used by the web UI)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { $ref: '#/components/schemas/Name' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Account' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /me:
+    get:
+      operationId: getMe
+      responses:
+        '200':
+          description: Current bot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bot_id, name, kind, room_id, seat, game_id]
+                properties:
+                  bot_id: { type: string }
+                  name: { type: string }
+                  kind: { $ref: '#/components/schemas/Kind' }
+                  room_id: { type: [string, 'null'] }
+                  seat: { oneOf: [{ $ref: '#/components/schemas/Seat' }, { type: 'null' }] }
+                  game_id: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /rooms:
+    get:
+      operationId: listRooms
+      security: []
+      responses:
+        '200':
+          description: All open rooms
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rooms]
+                properties:
+                  rooms: { type: array, items: { $ref: '#/components/schemas/Room' } }
+    post:
+      operationId: createRoom
+      summary: Create a room (does not seat the creator)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 40 }
+                config: { $ref: '#/components/schemas/RoomConfigInput' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Room' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /rooms/quick-join:
+    post:
+      operationId: quickJoin
+      summary: Sit in any waiting room with a free seat, or a new room
+      responses:
+        '200': { $ref: '#/components/responses/Joined' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /rooms/{rid}:
+    parameters: [{ $ref: '#/components/parameters/rid' }]
+    get:
+      operationId: getRoom
+      security: []
+      responses:
+        '200':
+          description: Room and current game (spectator view)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room, game, seq]
+                properties:
+                  room: { $ref: '#/components/schemas/Room' }
+                  game: { oneOf: [{ $ref: '#/components/schemas/PublicGame' }, { type: 'null' }] }
+                  seq: { type: integer, description: Latest event seq in this room }
+        '404': { $ref: '#/components/responses/Error' }
+  /rooms/{rid}/join:
+    parameters: [{ $ref: '#/components/parameters/rid' }]
+    post:
+      operationId: joinRoom
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seat: { $ref: '#/components/schemas/Seat' }
+      responses:
+        '200': { $ref: '#/components/responses/Joined' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /rooms/{rid}/leave:
+    parameters: [{ $ref: '#/components/parameters/rid' }]
+    post:
+      operationId: leaveRoom
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /rooms/{rid}/ready:
+    parameters: [{ $ref: '#/components/parameters/rid' }]
+    post:
+      operationId: setReady
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ready: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Updated room
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [room]
+                properties:
+                  room: { $ref: '#/components/schemas/Room' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /games:
+    get:
+      operationId: listGames
+      security: []
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: bot_id, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Recently finished games, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [games]
+                properties:
+                  games: { type: array, items: { $ref: '#/components/schemas/GameSummary' } }
+  /games/{gid}:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    get:
+      operationId: getGame
+      security: []
+      responses:
+        '200': { description: Spectator view, content: { application/json: { schema: { $ref: '#/components/schemas/PublicGame' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /games/{gid}/state:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    get:
+      operationId: getPlayerState
+      summary: Your view of a live game, including your hand
+      responses:
+        '200': { description: Player view, content: { application/json: { schema: { $ref: '#/components/schemas/PlayerGame' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /games/{gid}/legal-moves:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    get:
+      operationId: getLegalMoves
+      summary: Every legal play for you now (may be disabled per room)
+      responses:
+        '200':
+          description: Moves (empty when it is not your turn)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [moves, can_pass]
+                properties:
+                  moves:
+                    type: array
+                    items:
+                      type: object
+                      required: [cards, pattern]
+                      properties:
+                        cards: { $ref: '#/components/schemas/Cards' }
+                        pattern: { $ref: '#/components/schemas/Pattern' }
+                  can_pass: { type: boolean }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /games/{gid}/bid:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    post:
+      operationId: bid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score: { type: integer, enum: [0, 1, 2, 3], description: 0 = no bid; otherwise must exceed high_bid }
+                seq: { type: integer, description: seq of the bid.turn event you are answering }
+      responses:
+        '200': { $ref: '#/components/responses/ActionOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /games/{gid}/play:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    post:
+      operationId: play
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cards]
+              properties:
+                cards: { $ref: '#/components/schemas/Cards' }
+                pattern:
+                  type: object
+                  description: Optional hint when the cards can be read as several patterns
+                  required: [type]
+                  properties:
+                    type: { $ref: '#/components/schemas/PatternType' }
+                seq: { type: integer, description: seq of the turn event you are answering }
+      responses:
+        '200': { $ref: '#/components/responses/ActionOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /games/{gid}/replay:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    get:
+      operationId: getReplay
+      security: []
+      responses:
+        '200': { description: Full replay, content: { application/json: { schema: { $ref: '#/components/schemas/Replay' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      security: []
+      responses:
+        '200':
+          description: Aggregated results per bot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bots]
+                properties:
+                  bots:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        bot_id: { type: string }
+                        name: { type: string }
+                        kind: { $ref: '#/components/schemas/Kind' }
+                        games: { type: integer }
+                        wins: { type: integer }
+                        landlord_games: { type: integer }
+                        landlord_wins: { type: integer }
+                        score: { type: integer }
+                        timeouts: { type: integer }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    rid: { name: rid, in: path, required: true, schema: { type: string }, example: r_ab12cd }
+    gid: { name: gid, in: path, required: true, schema: { type: string }, example: g_0e5f362d505b }
+  responses:
+    Error:
+      description: Error (see docs/api.md for every code)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Ok:
+      description: OK
+      content: { application/json: { schema: { type: object, properties: { ok: { const: true } } } } }
+    ActionOk:
+      description: Action accepted
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok, seq]
+            properties:
+              ok: { const: true }
+              seq: { type: integer, description: seq of the event your action produced }
+              pattern: { oneOf: [{ $ref: '#/components/schemas/Pattern' }, { type: 'null' }] }
+    Joined:
+      description: Seated
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [room, seat]
+            properties:
+              room: { $ref: '#/components/schemas/Room' }
+              seat: { $ref: '#/components/schemas/Seat' }
+  schemas:
+    Name: { type: string, pattern: '^[\p{L}\p{N}_-]{1,24}$' }
+    Kind: { type: string, enum: [bot, human] }
+    Seat: { type: integer, enum: [0, 1, 2] }
+    Card:
+      type: string
+      description: Rank 3456789TJQKA2 + suit SHCD; BJ = small joker, RJ = big joker
+      pattern: '^([3-9TJQKA2][SHCD]|BJ|RJ)$'
+      example: TH
+    Cards: { type: array, items: { $ref: '#/components/schemas/Card' } }
+    PatternType:
+      type: string
+      enum: [single, pair, triple, triple_single, triple_pair, straight, pair_chain, plane, plane_single, plane_pair, four_two_single, four_two_pair, bomb, rocket]
+    Pattern:
+      type: object
+      required: [type, rank, length]
+      properties:
+        type: { $ref: '#/components/schemas/PatternType' }
+        rank: { type: string, enum: ['3', '4', '5', '6', '7', '8', '9', T, J, Q, K, A, '2', BJ, RJ], description: Comparison rank (lowest rank for chains, main body for kicker patterns) }
+        length: { type: integer, description: Chain length; 1 for non-chains }
+    Play:
+      type: object
+      required: [seat, cards, pattern]
+      properties:
+        seat: { $ref: '#/components/schemas/Seat' }
+        cards: { $ref: '#/components/schemas/Cards' }
+        pattern: { oneOf: [{ $ref: '#/components/schemas/Pattern' }, { type: 'null' }], description: null for a pass }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              examples: [BAD_REQUEST, UNKNOWN_CARD, BAD_BID, UNAUTHORIZED, BAD_INVITE, NOT_A_PLAYER, LEGAL_MOVES_DISABLED, NOT_FOUND, NAME_TAKEN, ROOM_FULL, SEAT_TAKEN, ALREADY_IN_ROOM, NOT_IN_ROOM, WRONG_PHASE, NOT_YOUR_TURN, STALE_SEQ, GAME_IN_PROGRESS, BID_TOO_LOW, CARDS_NOT_IN_HAND, MUST_PLAY, INVALID_PATTERN, CANNOT_BEAT, RATE_LIMITED]
+            message: { type: string }
+            details: {}
+    Account:
+      type: object
+      required: [bot_id, name, kind, token]
+      properties:
+        bot_id: { type: string }
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/Kind' }
+        token: { type: string, description: Shown only once }
+    RoomConfig:
+      type: object
+      required: [bid_timeout_ms, play_timeout_ms, legal_moves_api, auto_restart]
+      properties:
+        bid_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 10000 }
+        play_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 20000 }
+        legal_moves_api: { type: boolean, default: true }
+        auto_restart: { type: boolean, default: true }
+    RoomConfigInput:
+      type: object
+      properties:
+        bid_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
+        play_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
+        legal_moves_api: { type: boolean }
+        auto_restart: { type: boolean }
+    SeatInfo:
+      type: object
+      required: [seat, bot_id, name, kind, ready, connected, trustee, score]
+      properties:
+        seat: { $ref: '#/components/schemas/Seat' }
+        bot_id: { type: string }
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/Kind' }
+        ready: { type: boolean }
+        connected: { type: boolean }
+        trustee: { type: boolean }
+        score: { type: integer, description: Cumulative score in this room }
+    Room:
+      type: object
+      required: [id, name, status, seats, spectators, game_id, games_played, config]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [waiting, playing] }
+        seats:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { oneOf: [{ $ref: '#/components/schemas/SeatInfo' }, { type: 'null' }] }
+        spectators: { type: integer }
+        game_id: { type: [string, 'null'] }
+        games_played: { type: integer }
+        config: { $ref: '#/components/schemas/RoomConfig' }
+    Player:
+      type: object
+      required: [seat, bot_id, name, kind]
+      properties:
+        seat: { $ref: '#/components/schemas/Seat' }
+        bot_id: { type: string }
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/Kind' }
+    Result:
+      type: object
+      required: [kind, winner, winner_seat, landlord, base, bombs, spring, anti_spring, multiplier, scores]
+      properties:
+        kind: { type: string, enum: [win, nobid] }
+        winner: { type: [string, 'null'], enum: [landlord, farmers, null] }
+        winner_seat: { oneOf: [{ $ref: '#/components/schemas/Seat' }, { type: 'null' }] }
+        landlord: { oneOf: [{ $ref: '#/components/schemas/Seat' }, { type: 'null' }] }
+        base: { type: integer }
+        bombs: { type: integer }
+        spring: { type: boolean }
+        anti_spring: { type: boolean }
+        multiplier: { type: integer }
+        scores: { type: array, items: { type: integer }, minItems: 3, maxItems: 3 }
+    PublicGame:
+      type: object
+      required: [game_id, room_id, phase, players, first_bidder, bids, high_bid, landlord, bottom, turn, deadline, remaining_ms, to_beat, can_pass, cards_left, multiplier, history, result, seq, turn_seq]
+      properties:
+        game_id: { type: string }
+        room_id: { type: string }
+        phase: { type: string, enum: [bidding, playing, finished] }
+        players: { type: array, items: { $ref: '#/components/schemas/Player' } }
+        first_bidder: { $ref: '#/components/schemas/Seat' }
+        bids:
+          type: array
+          items:
+            type: object
+            properties:
+              seat: { $ref: '#/components/schemas/Seat' }
+              score: { type: integer }
+        high_bid: { type: integer }
+        landlord: { oneOf: [{ $ref: '#/components/schemas/Seat' }, { type: 'null' }] }
+        bottom: { oneOf: [{ $ref: '#/components/schemas/Cards' }, { type: 'null' }] }
+        turn: { oneOf: [{ $ref: '#/components/schemas/Seat' }, { type: 'null' }] }
+        deadline: { type: [integer, 'null'], description: Server epoch ms }
+        remaining_ms: { type: [integer, 'null'] }
+        to_beat: { oneOf: [{ $ref: '#/components/schemas/Play' }, { type: 'null' }], description: null = the seat on turn leads }
+        can_pass: { type: boolean }
+        cards_left: { type: array, items: { type: integer }, minItems: 3, maxItems: 3 }
+        multiplier: { type: integer }
+        history: { type: array, items: { $ref: '#/components/schemas/Play' } }
+        result: { oneOf: [{ $ref: '#/components/schemas/Result' }, { type: 'null' }] }
+        seq: { type: integer }
+        turn_seq: { type: integer }
+    PlayerGame:
+      allOf:
+        - $ref: '#/components/schemas/PublicGame'
+        - type: object
+          required: [seat, hand]
+          properties:
+            seat: { $ref: '#/components/schemas/Seat' }
+            hand: { $ref: '#/components/schemas/Cards' }
+    Event:
+      type: object
+      description: WebSocket message (also used in replays)
+      required: [type, seq, ts, room_id, game_id, data]
+      properties:
+        type: { type: string }
+        seq: { type: [integer, 'null'] }
+        ts: { type: integer }
+        room_id: { type: string }
+        game_id: { type: [string, 'null'] }
+        data: { type: object }
+    Replay:
+      allOf:
+        - $ref: '#/components/schemas/PublicGame'
+        - type: object
+          required: [seed, initial_hands, events]
+          properties:
+            seed: { type: string }
+            initial_hands: { type: array, items: { $ref: '#/components/schemas/Cards' }, minItems: 3, maxItems: 3 }
+            events: { type: array, items: { $ref: '#/components/schemas/Event' } }
+    GameSummary:
+      type: object
+      required: [game_id, room_id, players, result, started_at, finished_at]
+      properties:
+        game_id: { type: string }
+        room_id: { type: string }
+        players: { type: array, items: { $ref: '#/components/schemas/Player' } }
+        result: { $ref: '#/components/schemas/Result' }
+        started_at: { type: integer }
+        finished_at: { type: integer }

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ddz-sdk"
+version = "0.1.0"
+description = "Python SDK for the Dou Dizhu (斗地主) bot competition platform"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["websocket-client>=1.6"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["ddz_sdk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
