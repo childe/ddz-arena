@@ -2,7 +2,7 @@
 
 Base URL：`https://ddz.ohmycat.me`（下文路径都相对于它），WebSocket 地址把 `https` 换成 `wss`（即 `wss://ddz.ohmycat.me`）。域名经过 Cloudflare 代理；也可以用 `http://43.128.99.230` 直连服务器。所有请求和响应都是 JSON。
 
-接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程。
+接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛。
 
 | 资料 | 用途 |
 |---|---|
@@ -314,3 +314,59 @@ on_close():
 - [ ] 遇到 422 不会卡住，有保底动作；遇到 429 稍等 100ms 再试。
 - [ ] 每步在时限内完成（叫分 10 秒、出牌 20 秒），留出网络往返时间。
 - [ ] 在网页 `#/room/<房间号>` 围观自己的对局，确认行为符合预期。
+
+## 7. 约一场比赛
+
+想让自己的 bot 和别人的 bot 同桌对局，流程是：建一个房间，把房间号发给对方，各自的 bot 进入这个房间，三家都准备好后自动开局。一桌固定三家，两个人比赛时要再放一个 bot 凑数，例如自己再跑一个示例 bot。
+
+### 7.1 建房间
+
+两种方式任选一种。
+
+**网页**：打开首页，在大厅点「新建房间」。第一次使用时先填一个游客名字，生成游客身份（不需要邀请码，身份保存在浏览器里）。填上房间名后点「新建房间」，页面会跳到这个房间，地址栏 `#/room/` 后面的 `r_xxxxxx` 就是房间号。网页建的房间使用默认规则。
+
+**接口**：用任意 bot 的 token 调用 `POST /rooms`。需要修改规则时只能用这种方式。
+
+```bash
+curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
+  -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"name":"周五擂台","config":{"legal_moves_api":false}}'
+# 201 {"id":"r_ab12cd","name":"周五擂台","status":"waiting",...}
+```
+
+建房不会让创建者入座。创建者想参赛，要和其他人一样调用 `/join`。
+
+`config` 的可选项：
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `legal_moves_api` | `true` | 设为 `false` 时关闭 `GET /games/{gid}/legal-moves`（调用返回 `403 LEGAL_MOVES_DISABLED`），要求 bot 自己实现出牌规则。服务端始终校验每一手牌 |
+| `bid_timeout_ms` | `10000` | 叫分时限，1000–120000 的整数 |
+| `play_timeout_ms` | `20000` | 出牌时限，1000–120000 的整数 |
+| `auto_restart` | `true` | 一局结束 3 秒后自动开下一局。设为 `false` 时，每局结束后三家都要重新调用 `/ready` |
+
+### 7.2 让 bot 进入指定房间
+
+把房间号发给对方。每个 bot 调用 `POST /rooms/{房间号}/join` 入座，然后调用 `POST /rooms/{房间号}/ready`。不要用 `POST /rooms/quick-join`：快速入座会进入任意一个有空位的房间，你们很可能坐不到同一桌。
+
+| 方式 | 进入指定房间的写法 |
+|---|---|
+| Python SDK | `MyBot().run(base, token, room_id="r_ab12cd")` |
+| Python 示例 | `python examples/greedy_bot.py --base https://ddz.ohmycat.me --token <token> --room r_ab12cd` |
+| Node 示例 | `node node-bot.mjs --base https://ddz.ohmycat.me --token <token> --room r_ab12cd` |
+| 自己实现 | 按第 6.2 节的顺序：先连 WebSocket，再 `/join`（可带 `{"seat":0}` 指定座位），再 `/ready` |
+
+座位坐满后，其他 bot 再 `/join` 会得到 `409 ROOM_FULL`；指定的座位已有人时得到 `409 SEAT_TAKEN`。房间没有密码，知道房间号的任何 bot 都能坐进空位。
+
+### 7.3 对局和结果
+
+- 围观：任何人打开 `https://ddz.ohmycat.me/#/room/<房间号>` 就能实时观看，不需要登录。
+- 计分：`Room.seats[].score` 是每个座位在这个房间里的累计得分，`games_played` 是已打局数。平台不限制局数，打多少局、按什么判胜负由参赛各方约定。
+- 回放：每局结束后可以在网页大厅的最近对局列表里打开回放，或调用 `GET /games/{gid}/replay`。
+- 排行榜：`GET /leaderboard` 按 bot 统计所有房间的累计成绩。
+
+### 7.4 注意事项
+
+- 房间只保存在服务端内存里。服务端重启后所有房间消失，需要重新建房间；已经打完的对局、回放和排行榜保存在数据库里，不受影响。
+- 房间里没有人入座、也没有人围观的状态持续 10 分钟，房间会自动关闭。建好房间后尽快把房间号发给对方，或者一直开着房间页面。
+- `auto_restart` 开启时，一局结束时没有连着 WebSocket 的 bot 会被设为未准备，房间停下来等它，重新连上后自动恢复。所以参赛 bot 要保持 WebSocket 连接。
