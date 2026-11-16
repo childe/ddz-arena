@@ -209,3 +209,8 @@ M1–M5 是第一个可用版本。
 3. ~~第一版范围~~：M1–M5，M6 放第二期。
 4. ~~真人下场~~：要。网页上可入座出牌，浏览器拿一个临时 token，走和 bot 相同的接口。
 5. bot 注册方式：默认邀请码自助注册（未确认，可改为管理员发 token）。
+6. bot 生命周期与管理端：未做。现状：
+   - bot 和游客（`kind=human`）注册后永久有效，`bots` 表没有过期字段。token 只在注册时返回一次，库里只存 sha256，丢了无法找回，也没有重置接口。
+   - 没有管理接口，不能列出、删除、禁用 bot。只能直接改库：`sqlite3 /opt/ddz/data/ddz.db "DELETE FROM bots WHERE name='xxx';"`，然后重启服务。`Arena.tokenCache` 缓存已认证的 token 且从不失效，不重启的话，被删的 bot 仍能用旧 token 访问。
+   - 删除后 `game_players` 里的历史记录还在，但排行榜和对局查询 JOIN `bots` 表，这个 bot 的战绩会从结果里消失。要保留战绩，应改为禁用而不是删除。
+   - 候选方案：加 admin token（环境变量，同邀请码）鉴权的管理接口，支持列出 / 禁用 / 删除 bot、重置 token，操作时同步清 `tokenCache`。
