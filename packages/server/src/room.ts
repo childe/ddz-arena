@@ -39,6 +39,8 @@ interface SeatState extends Player {
   score: number;
   /** Left during a game: auto-played until the game ends, then the seat is freed. */
   left: boolean;
+  /** Unreadied because it had no WebSocket when a game ended; becomes ready again on reconnect. */
+  awayUnready?: boolean;
 }
 
 export interface RoomEvent {
@@ -241,10 +243,18 @@ export class Room {
     this.touch();
   }
 
+  /** A seated bot's first WebSocket connected: re-ready it if a game ended while it was away. */
+  reconnected(botId: string) {
+    const seat = this.seatOf(botId);
+    const s = seat === null ? null : this.seats[seat];
+    if (s?.awayUnready) this.setReady(botId, true);
+  }
+
   setReady(botId: string, ready: boolean) {
     const seat = this.seatOf(botId);
     if (seat === null) throw conflict('NOT_IN_ROOM', 'you are not seated in this room');
     this.seats[seat]!.ready = ready;
+    this.seats[seat]!.awayUnready = false;
     this.touch();
     this.maybeStart();
   }
@@ -458,8 +468,14 @@ export class Room {
     });
     // Free seats of players who left mid-game.
     for (let i = 0; i < 3; i++) {
-      if (this.seats[i]?.left) this.seats[i] = null;
-      else if (this.seats[i] && !this.config.auto_restart) this.seats[i]!.ready = false;
+      const s = this.seats[i];
+      if (s?.left) this.seats[i] = null;
+      else if (s && !this.config.auto_restart) s.ready = false;
+      else if (s && !this.isConnected(s.bot_id)) {
+        // Don't keep auto-playing for bots that went away; resume when they reconnect.
+        s.ready = false;
+        s.awayUnready = true;
+      }
     }
     if (this.seats.every((s) => s === null)) this.emptySince = Date.now();
     this.touch();

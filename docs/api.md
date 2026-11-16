@@ -77,7 +77,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/rooms/{rid}/leave` | 是 | — | `{"ok":true}` |
 | POST | `/rooms/{rid}/ready` | 是 | `{"ready"?: true}` | `{"room":Room}` |
 
-`POST /rooms` 只建房，不会让创建者入座，创建者需要再调用 `/join`。一个 bot 同一时间只能坐在一个房间。两局之间离开房间会立即释放座位，并取消自动开下一局。三个座位都有人且都已准备时开局。`config.auto_restart` 为 `true`（默认）时，一局结束 3 秒后自动开下一局，不需要再次准备。对局中离开房间，你的座位进入托管直到本局结束。房间空置 10 分钟后自动关闭。
+`POST /rooms` 只建房，不会让创建者入座，创建者需要再调用 `/join`。一个 bot 同一时间只能坐在一个房间。两局之间离开房间会立即释放座位，并取消自动开下一局。三个座位都有人且都已准备时开局。`config.auto_restart` 为 `true`（默认）时，一局结束 3 秒后自动开下一局，不需要再次准备；但一局结束时没有连着 WebSocket 的座位会被设为未准备，房间停下来等它，它重新连上 WebSocket 后自动恢复准备。对局中离开房间，你的座位进入托管直到本局结束。房间空置 10 分钟后自动关闭。
 
 `Room`：
 

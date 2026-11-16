@@ -191,7 +191,10 @@ export class Arena {
     if (!set) this.players.set(botId, (set = new Set()));
     set.add(ws);
     const room = this.roomOfBot(botId);
-    if (set.size === 1 && room) room.touch();
+    if (set.size === 1 && room) {
+      room.reconnected(botId);
+      room.touch();
+    }
   }
 
   removePlayerSocket(botId: string, ws: WebSocket) {

@@ -235,3 +235,42 @@ describe('timeouts and trustee', () => {
     [...listeners, spec].forEach((l) => l.close());
   }, 30000);
 });
+
+describe('auto restart with disconnected bots', () => {
+  it('stops after a game when a seat has no WebSocket and resumes on reconnect', async () => {
+    const { bots, room, listeners, spec } = await setupTable();
+    listeners[1]!.close();
+    listeners[2]!.close();
+    for (const b of bots) await api('POST', `/api/v1/rooms/${room.id}/ready`, b.token, {});
+    const started = await spec.wait((e) => e.type === 'game.started');
+    const gid = started.game_id;
+    const st = (await api('GET', `/api/v1/games/${gid}/state`, bots[0]!.token)).body;
+    await api('POST', `/api/v1/games/${gid}/bid`, bots[st.first_bidder]!.token, { score: 3 });
+    for (let steps = 0; ; steps++) {
+      const s = (await api('GET', `/api/v1/games/${gid}`)).body;
+      if (s.phase === 'finished') break;
+      const bot = bots[s.turn]!;
+      const moves = (await api('GET', `/api/v1/games/${gid}/legal-moves`, bot.token)).body.moves;
+      const r = await api('POST', `/api/v1/games/${gid}/play`, bot.token, { cards: moves[0]?.cards ?? [] });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      if (steps > 200) throw new Error('too many steps');
+    }
+    const fin = await spec.wait((e) => e.type === 'game.finished');
+    const seatsAfter = (await api('GET', `/api/v1/rooms/${room.id}`)).body.room.seats;
+    expect(seatsAfter.map((s: any) => s.ready)).toEqual([true, false, false]);
+
+    // No new game while two seats are away.
+    await new Promise((r) => setTimeout(r, 3500));
+    expect(spec.events.some((e) => e.type === 'game.started' && e.seq > fin.seq)).toBe(false);
+
+    // Reconnecting re-readies the seat; the game starts once both are back.
+    const back1 = new Listener(`${wsBase}/ws?token=${bots[1]!.token}`);
+    await back1.open();
+    await spec.wait((e) => e.type === 'room.updated' && e.data.room.seats[1].ready === true);
+    expect(spec.events.some((e) => e.type === 'game.started' && e.seq > fin.seq)).toBe(false);
+    const back2 = new Listener(`${wsBase}/ws?token=${bots[2]!.token}`);
+    await back2.open();
+    await spec.wait((e) => e.type === 'game.started' && e.seq > fin.seq);
+    [listeners[0]!, spec, back1, back2].forEach((l) => l.close());
+  }, 30000);
+});
