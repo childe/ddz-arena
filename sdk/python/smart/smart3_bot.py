@@ -32,15 +32,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import sys
 from dataclasses import dataclass
+from math import comb
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ddz_sdk import Bot, GameState, Move, Pattern, register_bot  # noqa: E402
+import endgame  # noqa: E402
 from ddz_sdk.cards import (  # noqa: E402
     RANK_2,
     RANK_A,
@@ -258,6 +262,18 @@ class Smart3Bot(Bot):
     BOMB_REST_COST = 1.0
     #: when leading and an opponent has <= this many cards, lead what they cannot beat
     LEAD_GUARD = 2
+    #: in that case keep bosses for later and lead the weak group least likely to be beaten
+    KEEP_BOSS = True
+    #: endgame search (see endgame.py) once all hands hold <= ENDGAME_TOTAL cards and
+    #: someone has <= ENDGAME_SHORT; 0 turns it off
+    ENDGAME_TOTAL = 20
+    ENDGAME_SHORT = 5
+    #: hidden-hand samples per decision and the time limit for one decision
+    ENDGAME_SAMPLES = 24
+    ENDGAME_BUDGET_S = 2.0
+    #: a sampled deal where an opponent passed while holding a non-bomb answer is kept
+    #: with this probability per such pass (1: no inference)
+    ENDGAME_PASS_WEIGHT = 1.0
     #: the farmer before the landlord tops up the other farmer's single / pair below this
     #: rank (-1: never) when that does not hurt its own hand
     TOP_UP_BELOW = 8
@@ -289,9 +305,24 @@ class Smart3Bot(Bot):
             if len(m.cards) == len(state.hand):
                 return m
         ctx = _Ctx(self, state)
-        if state.leading:
-            return ctx.lead()
-        return ctx.follow(moves)
+        rule = ctx.lead() if state.leading else ctx.follow(moves)
+        if self.ENDGAME_TOTAL and endgame.applies(
+            state, self.ENDGAME_TOTAL, self.ENDGAME_SHORT
+        ):
+            seed = "%s|%s|%d" % (
+                state.game_id,
+                ",".join(state.hand),
+                len(state.history),
+            )
+            return endgame.choose(
+                state,
+                rule,
+                self.ENDGAME_SAMPLES,
+                self.ENDGAME_BUDGET_S,
+                random.Random(seed),
+                self.ENDGAME_PASS_WEIGHT,
+            )
+        return rule
 
 
 class _Ctx:
@@ -355,6 +386,23 @@ class _Ctx:
         """At most one group is not a boss: lead the bosses, then the last group."""
         return len(self.weak_groups(groups)) <= 1
 
+    def beat_chance(self, g: Group) -> float:
+        """Chance that an opponent holding ``opp_min`` random unseen cards beats ``g``
+        without a bomb (singles and pairs; other groups count as beatable if possible).
+        """
+        k = self.opp_min
+        total = sum(self.unseen)
+        if total < k or k < 1:
+            return 0.0
+        higher = range(g.top + 1, len(self.unseen))
+        if g.type == "single":
+            h = sum(self.unseen[r] for r in higher)
+            return 1 - comb(total - h, k) / comb(total, k)
+        if g.type == "pair" and k >= 2:
+            ways = sum(comb(self.unseen[r], 2) for r in higher if r < RANK_BJ)
+            return min(1.0, ways * comb(k, 2) / comb(total, 2))
+        return 1.0 if can_beat_with(g, self.unseen, k) else 0.0
+
     # ---- leading
     def lead(self) -> Move:
         groups = self.groups
@@ -378,9 +426,30 @@ class _Ctx:
                 return self.to_move(Group("single", singles[0], 1, (singles[0],)))
 
         pool = weak or [g for g in groups if g.type not in BOMBS] or list(groups)
-        # An opponent close to going out: lead what they cannot beat (too many cards for
-        # them, or nothing unseen beats it); else the strongest group.
+        if self.opp_min <= self.bot.LEAD_GUARD and self.bot.KEEP_BOSS:
+            # An opponent close to going out. A group with more cards than they hold cannot
+            # be followed at all. Otherwise keep the bosses (they win the lead back later)
+            # and lead a weak group: first one smaller than their hand (beating it does not
+            # let them go out, and they may have to split a combo to do it), then one of
+            # exactly their hand size; within each, the one they are least likely to beat.
+            normal = [g for g in groups if g.type not in BOMBS]
+            big = [g for g in normal if g.size > self.opp_min]
+            if big:
+                return self.to_move(min(big, key=lambda g: (g.top, -g.size)))
+            if weak:
+                return self.to_move(
+                    min(
+                        weak,
+                        key=lambda g: (
+                            g.size >= self.opp_min,
+                            self.beat_chance(g),
+                            g.top,
+                        ),
+                    )
+                )
         if self.opp_min <= self.bot.LEAD_GUARD:
+            # Older rule: lead what they cannot beat (too many cards for them, or nothing
+            # unseen beats it); else the strongest group.
             allg = [g for g in groups if g.type not in BOMBS] or list(groups)
             safe = [g for g in allg if not can_beat_with(g, self.unseen, self.opp_min)]
             if safe:

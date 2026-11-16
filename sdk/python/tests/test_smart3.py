@@ -96,3 +96,56 @@ def test_duplicate_beats_random():
     res = duplicate(Smart3Bot, RandomBot, range(5))
     assert res["games"] == 15
     assert res["unit_edge"] > 0
+
+
+def test_keeps_boss_when_landlord_is_close_to_out():
+    # Farmer with 7 7 8 A + small joker; the big joker is gone and the landlord has 2 cards.
+    # From replay g_9f126dae2d10 (the landlord holds 2 2). Leading the joker or the pair
+    # loses; a single makes the landlord split the pair, and the kept joker wins the lead back.
+    st = GameState(
+        game="ddz",
+        seat=1,
+        hand=parse_short("778A") + ["BJ"],
+        phase="playing",
+        landlord=2,
+        to_beat=None,
+        can_pass=False,
+        cards_left=[11, 5, 2],
+        history=[{"seat": 2, "cards": ["RJ"], "pattern": None}],
+    )
+    m = Smart3Bot().on_play(st)
+    assert m.pattern.type == "single" and m.cards != ["BJ"]
+
+
+def test_endgame_search_finds_the_winning_lead():
+    # The g_9f126dae2d10 position with a full card history: the landlord has 2 cards,
+    # 13 cards are unseen. Without KEEP_BOSS the rules lead the small joker and lose;
+    # the endgame search leads a single that wins (8 or A).
+    deck = [r + s for r in "3456789TJQKA2" for s in "SHCD"] + ["BJ", "RJ"]
+    mine = ["7S", "7H", "8S", "AS", "BJ"]
+    hidden = "3S 3H 4S 5S 6S 7C 8H 9S TS JS QS 2S 2H".split()
+    played = [c for c in deck if c not in mine + hidden and c != "RJ"]
+    st = GameState(
+        game="ddz",
+        seat=1,
+        hand=mine,
+        phase="playing",
+        landlord=2,
+        to_beat=None,
+        can_pass=False,
+        cards_left=[11, 5, 2],
+        history=[
+            {"seat": 0, "cards": played, "pattern": None},
+            {"seat": 2, "cards": ["RJ"], "pattern": None},
+        ],
+    )
+
+    class Rules(Smart3Bot):
+        KEEP_BOSS = False
+        ENDGAME_TOTAL = 0
+
+    class Search(Smart3Bot):
+        KEEP_BOSS = False
+
+    assert Rules().on_play(st).cards == ["BJ"]
+    assert Search().on_play(st).cards in (["8S"], ["AS"])
