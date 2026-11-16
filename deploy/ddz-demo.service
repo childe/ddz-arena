@@ -1,0 +1,17 @@
+[Unit]
+Description=Dou Dizhu endless demo table (three bots in room "三机演示")
+After=ddz.service
+Wants=ddz.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/ddz
+EnvironmentFile=/etc/ddz.env
+Environment=DDZ_DEMO_STATE=/opt/ddz/data/demo.json
+ExecStart=/usr/bin/node deploy/demo.mjs
+Restart=always
+RestartSec=5
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target

@@ -56,6 +56,8 @@ deploy/deploy.sh tt
 
 脚本在本地构建前端，用 rsync 同步到 `tt:/opt/ddz`，安装运行时依赖，然后安装并重启 systemd 服务 `ddz`。第一次部署会生成 `/etc/ddz.env`，其中包含随机生成的邀请码。
 
+演示桌 `ddz-demo` 是另一个 systemd 服务，运行 `deploy/demo.mjs`：3 个 bot 在名为「三机演示」的房间里无限对局，每步停 1.5 秒（`DDZ_DEMO_PAUSE_MS`），服务端重启后自动重建房间。用 `ssh tt sudo systemctl enable --now ddz-demo` 启用一次，之后每次部署会自动重启它；用 `disable --now` 停用。
+
 常用运维命令：
 
 ```bash

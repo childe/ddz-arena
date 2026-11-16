@@ -24,10 +24,12 @@ if [ ! -f /etc/ddz.env ]; then
   printf 'PORT=80\nHOST=0.0.0.0\nDDZ_DB=/opt/ddz/data/ddz.db\nDDZ_INVITE_CODE=%s\n' "$code" | sudo tee /etc/ddz.env >/dev/null
   echo "created /etc/ddz.env with invite code: $code"
 fi
-sudo cp deploy/ddz.service /etc/systemd/system/ddz.service
+sudo cp deploy/ddz.service deploy/ddz-demo.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ddz
 sudo systemctl restart ddz
+# The demo table is opt-in: `sudo systemctl enable --now ddz-demo` once; later deploys restart it.
+sudo systemctl try-restart ddz-demo
 sleep 2
 curl -fsS "localhost:$(grep -oP '(?<=^PORT=)\d+' /etc/ddz.env)/healthz" && echo
 REMOTE
