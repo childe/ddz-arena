@@ -403,6 +403,8 @@ export const api = {
 // ---- guest identity (localStorage, guarded) ----
 
 const GUEST_KEY = 'ddz.guest';
+/** Identities used in this browser, most recent first; kept after 退出 so they can be switched back to. */
+const KNOWN_KEY = 'ddz.guests';
 
 export function loadGuest(): Account | null {
   try {
@@ -417,9 +419,39 @@ export function loadGuest(): Account | null {
 
 export function saveGuest(g: Account | null): void {
   try {
-    if (g) localStorage.setItem(GUEST_KEY, JSON.stringify(g));
-    else localStorage.removeItem(GUEST_KEY);
+    if (g) {
+      localStorage.setItem(GUEST_KEY, JSON.stringify(g));
+      saveKnown([g, ...loadKnown().filter((k) => k.bot_id !== g.bot_id)]);
+    } else {
+      saveKnown(loadKnown()); // keep the identity being signed out of (it may predate the list)
+      localStorage.removeItem(GUEST_KEY);
+    }
   } catch {
     /* storage unavailable: identity lives only for this page load */
   }
+}
+
+export function loadKnown(): Account[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(KNOWN_KEY) ?? '[]');
+    const known = Array.isArray(list) ? (list.filter((g) => g && typeof g.token === 'string') as Account[]) : [];
+    // Identities saved before this list existed.
+    const cur = loadGuest();
+    return cur && !known.some((k) => k.bot_id === cur.bot_id) ? [cur, ...known] : known;
+  } catch {
+    return [];
+  }
+}
+
+function saveKnown(list: Account[]): void {
+  try {
+    localStorage.setItem(KNOWN_KEY, JSON.stringify(list.slice(0, 10)));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Remove an identity from this browser for good (its token is lost unless saved elsewhere). */
+export function forgetKnown(botId: string): void {
+  saveKnown(loadKnown().filter((k) => k.bot_id !== botId));
 }

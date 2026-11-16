@@ -365,14 +365,42 @@ select {
 }
 .guest-form {
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  flex-wrap: wrap;
   margin-top: 6px;
 }
-.guest-form input {
+.guest-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.guest-row input {
   flex: 1;
   min-width: 120px;
-  max-width: 220px;
+  max-width: 260px;
+}
+.guest-known {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+.guest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.guest-forget {
+  padding: 0 4px;
+  color: var(--muted);
+}
+.guest-token-login summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.guest-token-login .guest-row {
+  margin-top: 6px;
 }
 
 .room-list {

@@ -181,7 +181,7 @@ function Rooms() {
         ) : (
           <details className="create-room-help">
             <summary>新建房间</summary>
-            <p className="muted">新建房间需要身份，先创建一个游客身份：</p>
+            <p className="muted">新建房间需要身份：切回用过的身份、创建游客身份，或用 token 登录。</p>
             <GuestForm compact />
           </details>
         )}

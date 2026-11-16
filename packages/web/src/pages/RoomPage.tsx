@@ -407,7 +407,7 @@ export function RoomPage({ rid }: { rid: string }) {
       </div>
       {!guest && hasEmpty && (
         <details className="join-help">
-          <summary>想下场？创建游客身份后可以入座</summary>
+          <summary>想下场？选一个身份后可以入座</summary>
           <GuestForm compact />
         </details>
       )}

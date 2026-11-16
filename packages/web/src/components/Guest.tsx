@@ -1,40 +1,128 @@
 import { type FormEvent, useState } from 'react';
-import { api, errorText } from '../api.ts';
+import { type Account, ApiError, api, errorText, forgetKnown, loadKnown } from '../api.ts';
 import { setGuest, useGuest } from '../guest.ts';
 import { toast } from './Toast.tsx';
 
 const NAME_RE = /^[\p{L}\p{N}_-]{1,24}$/u;
 
-/** Form to create a guest identity (token for 真人下场 / 新建房间). */
+/** Check a token with GET /me and make it the current identity. */
+async function signIn(token: string): Promise<Account> {
+  const me = await api.me(token);
+  const acc: Account = { bot_id: me.bot_id, name: me.name, kind: me.kind, token };
+  setGuest(acc);
+  toast(`欢迎回来，${acc.name}`, 'info');
+  return acc;
+}
+
+/** Identity picker: identities used in this browser, a new guest, or sign in with a token. */
 export function GuestForm({ compact }: { compact?: boolean }) {
   const [name, setName] = useState('');
+  const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
-  const submit = async (e: FormEvent) => {
+  const [known, setKnown] = useState(loadKnown);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = (e: FormEvent) => {
     e.preventDefault();
     const n = name.trim();
     if (!NAME_RE.test(n)) {
       toast('名字为 1–24 个字符：字母、数字、中文、-、_');
       return;
     }
-    setBusy(true);
-    try {
-      const acc = await api.createGuest(n);
-      setGuest(acc);
-      toast(`欢迎，${acc.name}`, 'info');
-    } catch (err) {
-      toast(errorText(err));
-    } finally {
-      setBusy(false);
-    }
+    run(async () => {
+      try {
+        const acc = await api.createGuest(n);
+        setGuest(acc);
+        toast(`欢迎，${acc.name}。点右上角「复制 token」保存好，换浏览器时用它登录`, 'info');
+      } catch (err) {
+        toast(err instanceof ApiError && err.code === 'NAME_TAKEN' ? `「${n}」已被占用；如果是你的身份，请用 token 登录` : errorText(err));
+      }
+    });
   };
+
+  const loginToken = (e: FormEvent) => {
+    e.preventDefault();
+    const t = token.trim();
+    if (!t) return;
+    run(async () => {
+      try {
+        await signIn(t);
+      } catch (err) {
+        toast(err instanceof ApiError && err.status === 401 ? 'token 无效' : errorText(err));
+      }
+    });
+  };
+
+  const switchTo = (k: Account) =>
+    run(async () => {
+      try {
+        await signIn(k.token);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          forgetKnown(k.bot_id);
+          setKnown(loadKnown());
+          toast(`「${k.name}」已失效，已从列表移除`);
+        } else toast(errorText(err));
+      }
+    });
+
+  const forget = (k: Account) => {
+    if (!confirm(`从本机忘掉「${k.name}」？如果没有另外保存它的 token，就再也用不了这个身份。`)) return;
+    forgetKnown(k.bot_id);
+    setKnown(loadKnown());
+  };
+
   return (
-    <form className={`guest-form${compact ? ' compact' : ''}`} onSubmit={submit}>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="输入昵称" maxLength={24} aria-label="昵称" />
-      <button className="btn btn-primary" disabled={busy}>
-        {busy ? '创建中…' : '创建游客身份'}
-      </button>
-    </form>
+    <div className={`guest-form${compact ? ' compact' : ''}`}>
+      {known.length > 0 && (
+        <div className="guest-known">
+          <span className="muted">用过的身份：</span>
+          {known.map((k) => (
+            <span key={k.bot_id} className="guest-chip">
+              <button type="button" className="btn btn-small" disabled={busy} onClick={() => switchTo(k)} title={`切换到 ${k.name}`}>
+                {k.name}
+              </button>
+              <button type="button" className="link-btn guest-forget" onClick={() => forget(k)} title="从本机忘掉" aria-label={`忘掉 ${k.name}`}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <form className="guest-row" onSubmit={create}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="输入昵称" maxLength={24} aria-label="昵称" />
+        <button className="btn btn-primary" disabled={busy}>
+          {busy ? '请稍候…' : '创建游客身份'}
+        </button>
+      </form>
+      <details className="guest-token-login">
+        <summary>用 token 登录</summary>
+        <form className="guest-row" onSubmit={loginToken}>
+          <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="ddz_…" aria-label="token" autoComplete="off" spellCheck={false} />
+          <button className="btn" disabled={busy}>
+            登录
+          </button>
+        </form>
+      </details>
+    </div>
   );
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function GuestBadge() {
@@ -45,8 +133,19 @@ export function GuestBadge() {
       <span title={guest.bot_id}>{guest.name}</span>
       <button
         className="link-btn"
+        title="token 是这个身份的凭证，换浏览器时用它登录"
+        onClick={async () => {
+          if (await copyText(guest.token)) toast('已复制 token，请保存到安全的地方', 'info');
+          else prompt('复制并保存这个 token：', guest.token);
+        }}
+      >
+        复制 token
+      </button>
+      <button
+        className="link-btn"
         onClick={() => {
-          if (confirm('退出游客身份？token 会从本机删除，之后无法再用这个身份操作。')) setGuest(null);
+          setGuest(null);
+          toast(`已退出。「${guest.name}」保留在本机，可在「用过的身份」里切回`, 'info');
         }}
       >
         退出
