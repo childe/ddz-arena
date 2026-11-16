@@ -192,6 +192,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: bot_id, in: query, schema: { type: string } }
         - { name: game, in: query, schema: { $ref: '#/components/schemas/GameType' } }
+        - { name: room_id, in: query, schema: { type: string }, description: Only games played in this room }
       responses:
         '200':
           description: Recently finished games, newest first

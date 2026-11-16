@@ -231,13 +231,17 @@ class Client:
         limit: int = 20,
         bot_id: Optional[str] = None,
         game: Optional[str] = None,
+        room_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Recent finished games (``GameSummary`` list), optionally of one ``game`` type."""
+        """Recent finished games (``GameSummary`` list, newest first), optionally only those
+        of one bot, one ``game`` type and/or one room."""
         params: Dict[str, Any] = {"limit": limit}
         if bot_id:
             params["bot_id"] = bot_id
         if game:
             params["game"] = game
+        if room_id:
+            params["room_id"] = room_id
         return self._req("GET", "/games?" + urllib.parse.urlencode(params)).get(
             "games", []
         )

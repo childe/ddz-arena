@@ -383,11 +383,13 @@ export const api = {
       body: { action, ...(action === 'raise' ? { amount } : {}), seq },
     }),
   replay: (gid: string) => request<AnyReplay>('GET', `/games/${encodeURIComponent(gid)}/replay`),
-  games: (limit = 20, botId?: string, game?: GameType) =>
-    request<{ games: GameSummary[] }>(
-      'GET',
-      `/games?limit=${limit}${botId ? `&bot_id=${encodeURIComponent(botId)}` : ''}${game ? `&game=${game}` : ''}`,
-    ),
+  games: (limit = 20, filter: { botId?: string; game?: GameType; roomId?: string } = {}) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (filter.botId) q.set('bot_id', filter.botId);
+    if (filter.game) q.set('game', filter.game);
+    if (filter.roomId) q.set('room_id', filter.roomId);
+    return request<{ games: GameSummary[] }>('GET', `/games?${q}`);
+  },
   leaderboard: (game: GameType = 'ddz') =>
     request<{ game?: GameType; bots: LeaderboardRow[] }>('GET', `/leaderboard?game=${game}`),
 

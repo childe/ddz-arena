@@ -344,6 +344,9 @@ describe('game types', () => {
     const games = (await api('GET', `/api/v1/games?game=ddz4&bot_id=${bots[0]!.bot_id}`)).body.games;
     expect(games[0].game).toBe('ddz4');
     expect(games[0].players).toHaveLength(4);
+    const inRoom = (await api('GET', `/api/v1/games?room_id=${games[0].room_id}`)).body.games;
+    expect(inRoom.map((g: any) => g.game_id)).toEqual([gid]);
+    expect((await api('GET', '/api/v1/games?room_id=r_nope')).body.games).toEqual([]);
     const rep = (await api('GET', `/api/v1/games/${gid}/replay`)).body;
     expect(rep.initial_hands).toHaveLength(4);
     [...listeners, spec].forEach((l) => l.close());

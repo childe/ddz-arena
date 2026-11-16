@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { Db, type BotRow } from './db.ts';
+import { Db, type BotRow, type GameFilter } from './db.ts';
 import { ApiError, conflict, notFound, badRequest } from './errors.ts';
 import { Room, newId, type RoomConfig, type RoomEvent, type FinishedGame, type Player } from './room.ts';
 import { variantOf, type GameVariant } from './games/index.ts';
@@ -177,8 +177,8 @@ export class Arena {
     return JSON.parse(row.replay);
   }
 
-  recentGames(limit: number, botId?: string, game?: string) {
-    return this.db.recentGames(limit, botId, game).map((g) => ({
+  recentGames(limit: number, filter: GameFilter = {}) {
+    return this.db.recentGames(limit, filter).map((g) => ({
       game_id: g.id, room_id: g.room_id, game: g.game_type,
       players: (JSON.parse(g.players) as (Player | null)[]).flatMap((p, seat) => (p ? [{ seat, ...p }] : [])), result: JSON.parse(g.result),
       started_at: g.started_at, finished_at: g.finished_at,

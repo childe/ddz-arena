@@ -603,6 +603,9 @@ select {
   margin: 0 0 6px;
   font-size: 14px;
 }
+.room-side .room-games-title {
+  margin-top: 14px;
+}
 
 .history {
   background: var(--panel);

@@ -182,10 +182,10 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   }
   app.get<P>('/api/v1/games/:gid', async (req) => arena.publicGame(req.params.gid));
   app.get<P>('/api/v1/games/:gid/replay', async (req) => arena.replay(req.params.gid));
-  app.get<{ Querystring: { limit?: string; bot_id?: string; game?: string } }>('/api/v1/games', async (req) => {
+  app.get<{ Querystring: { limit?: string; bot_id?: string; game?: string; room_id?: string } }>('/api/v1/games', async (req) => {
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    const game = req.query.game === undefined ? undefined : variantOf(req.query.game).type;
-    return { games: arena.recentGames(limit, req.query.bot_id, game) };
+    const gameType = req.query.game === undefined ? undefined : variantOf(req.query.game).type;
+    return { games: arena.recentGames(limit, { botId: req.query.bot_id, gameType, roomId: req.query.room_id }) };
   });
   app.get<{ Querystring: { game?: string } }>('/api/v1/leaderboard', async (req) => ({
     game: variantOf(req.query.game).type,

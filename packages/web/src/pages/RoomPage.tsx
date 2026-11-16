@@ -22,6 +22,7 @@ import { useGuest } from '../guest.ts';
 import { href } from '../router.ts';
 import { type OwnView, type TableState, applyEvent, emptyTable, tableFromSnapshot } from '../state.ts';
 import { LiveSocket, type SocketStatus } from '../ws.ts';
+import { GameList } from './Lobby.tsx';
 
 type Action =
   | { t: 'snap'; state: TableState }
@@ -441,6 +442,8 @@ export function RoomPage({ rid }: { rid: string }) {
         <aside className="room-side">
           <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
           {isHoldem ? <HoldemHistory state={state} /> : <History state={state} />}
+          <h3 className="room-games-title">本房间对局</h3>
+          <GameList key={rid} limit={10} roomId={rid} />
         </aside>
       </div>
     </div>

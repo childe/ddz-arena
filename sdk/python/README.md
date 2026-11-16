@@ -141,6 +141,7 @@ c.create_room("周五牌局", {"seats": 6}, game="holdem")   # 建德州扑克�
 c.quick_join(game="ddz4")                                # 只进四人斗地主房间
 c.leaderboard(game="holdem")                             # 德州扑克排行榜
 c.list_games(limit=20, game="ddz4")                      # 最近的四人斗地主对局
+c.list_games(limit=100, room_id="r_ab12cd")             # 某个房间的历史对局
 c.action(game_id, "raise", 12, seq=42)                   # 加注到本轮总额 12
 c.action(game_id, "call", seq=42)                        # fold / check / call 不需要 amount
 ```

@@ -269,8 +269,8 @@ function Games({ limit, filterable }: { limit: number; filterable?: boolean }) {
   );
 }
 
-function GameList({ limit, game }: { limit: number; game?: GameType }) {
-  const { data, error } = usePoll(() => api.games(limit, undefined, game), 10000);
+export function GameList({ limit, game, roomId }: { limit: number; game?: GameType; roomId?: string }) {
+  const { data, error } = usePoll(() => api.games(limit, { game, roomId }), 10000);
   const games = data?.games ?? [];
   if (error) return <div className="error-box">加载失败：{error}</div>;
   if (!data) return <div className="muted">加载中…</div>;

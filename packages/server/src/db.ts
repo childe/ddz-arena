@@ -31,6 +31,13 @@ export interface GameRow {
   finished_at: number;
 }
 
+/** Filters for {@link Db.recentGames}; all optional and combined with AND. */
+export interface GameFilter {
+  botId?: string;
+  gameType?: string;
+  roomId?: string;
+}
+
 export class Db {
   private db: DatabaseSync;
 
@@ -48,6 +55,7 @@ export class Db {
         result TEXT NOT NULL, replay TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS games_finished ON games(finished_at DESC);
+      CREATE INDEX IF NOT EXISTS games_room ON games(room_id, finished_at DESC);
       CREATE TABLE IF NOT EXISTS game_players (
         game_id TEXT NOT NULL, bot_id TEXT NOT NULL, seat INTEGER NOT NULL, is_landlord INTEGER NOT NULL,
         score INTEGER NOT NULL, win INTEGER NOT NULL, timeouts INTEGER NOT NULL,
@@ -93,7 +101,8 @@ export class Db {
     return this.db.prepare('SELECT * FROM games WHERE id = ?').get(id) as GameRow | undefined;
   }
 
-  recentGames(limit: number, botId?: string, gameType?: string): Omit<GameRow, 'replay'>[] {
+  recentGames(limit: number, filter: GameFilter = {}): Omit<GameRow, 'replay'>[] {
+    const { botId, gameType, roomId } = filter;
     const cols = 'g.id, g.room_id, g.game_type, g.seed, g.players, g.result, g.started_at, g.finished_at';
     const where: string[] = [];
     const args: (string | number)[] = [];
@@ -104,6 +113,10 @@ export class Db {
     if (gameType) {
       where.push('g.game_type = ?');
       args.push(gameType);
+    }
+    if (roomId) {
+      where.push('g.room_id = ?');
+      args.push(roomId);
     }
     const sql = `SELECT ${cols} FROM games g ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY g.finished_at DESC LIMIT ?`;
     return this.db.prepare(sql).all(...args, limit) as unknown as Omit<GameRow, 'replay'>[];

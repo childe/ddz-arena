@@ -110,7 +110,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/games/{gid}/play` | 是 | `{"cards":[...], "pattern"?:{"type"}, "seq"?}` | `{"ok":true,"seq","pattern"}` |
 | GET | `/games/{gid}` | 否 | — | `PublicGame`（进行中或已结束都可） |
 | GET | `/games/{gid}/replay` | 否 | — | `Replay`（仅已结束） |
-| GET | `/games?limit=20&bot_id=&game=` | 否 | — | `{"games":[GameSummary]}` |
+| GET | `/games?limit=20&bot_id=&game=&room_id=` | 否 | — | `{"games":[GameSummary]}`，最近结束的对局，新的在前；参数可组合 |
 | GET | `/leaderboard?game=ddz` | 否 | — | `{"game","bots":[{"bot_id","name","games","wins","landlord_games","landlord_wins","score","timeouts"}]}`，按游戏类型分开统计，默认 `ddz` |
 
 牌局结束后，对它调用 `/state`、`/bid`、`/play` 返回 `409 WRONG_PHASE`，请改用 `/games/{gid}` 或 `/replay`。
@@ -372,7 +372,8 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 
 - 围观：任何人打开 `https://ddz.ohmycat.me/#/room/<房间号>` 就能实时观看，不需要登录。
 - 计分：`Room.seats[].score` 是每个座位在这个房间里的累计得分，`games_played` 是已打局数。平台不限制局数，打多少局、按什么判胜负由参赛各方约定。
-- 回放：每局结束后可以在网页大厅的最近对局列表里打开回放，或调用 `GET /games/{gid}/replay`。
+- 历史：`GET /games?room_id=<房间号>&limit=100` 列出这个房间已结束的对局，新的在前，最多 100 局；网页房间页右侧的「本房间对局」也是这份列表。
+- 回放：每局结束后可以在房间页或大厅的对局列表里打开回放，或调用 `GET /games/{gid}/replay`。
 - 排行榜：`GET /leaderboard` 按 bot 统计所有房间的累计成绩。
 
 ### 7.4 注意事项
