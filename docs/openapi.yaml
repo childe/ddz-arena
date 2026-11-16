@@ -94,6 +94,7 @@ paths:
               type: object
               properties:
                 name: { type: string, maxLength: 40 }
+                game: { $ref: '#/components/schemas/GameType' }
                 config: { $ref: '#/components/schemas/RoomConfigInput' }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Room' } } } }
@@ -102,7 +103,14 @@ paths:
   /rooms/quick-join:
     post:
       operationId: quickJoin
-      summary: Sit in any waiting room with a free seat, or a new room
+      summary: Sit in any waiting room of the given game type with a free seat, or a new room
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                game: { $ref: '#/components/schemas/GameType' }
       responses:
         '200': { $ref: '#/components/responses/Joined' }
         '401': { $ref: '#/components/responses/Error' }
@@ -183,6 +191,7 @@ paths:
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: bot_id, in: query, schema: { type: string } }
+        - { name: game, in: query, schema: { $ref: '#/components/schemas/GameType' } }
       responses:
         '200':
           description: Recently finished games, newest first
@@ -300,10 +309,37 @@ paths:
         '200': { description: Full replay, content: { application/json: { schema: { $ref: '#/components/schemas/Replay' } } } }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /games/{gid}/action:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    post:
+      operationId: holdemAction
+      summary: "Texas Hold'em only: fold, check, call or raise"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [fold, check, call, raise] }
+                amount: { type: integer, description: 'raise only: your total bet for this street (raise-to), between min_raise_to and max_raise_to' }
+                seq: { type: integer, description: seq of the turn event you are answering }
+      responses:
+        '200': { $ref: '#/components/responses/ActionOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
   /leaderboard:
     get:
       operationId: getLeaderboard
       security: []
+      parameters:
+        - { name: game, in: query, schema: { $ref: '#/components/schemas/GameType' } }
       responses:
         '200':
           description: Aggregated results per bot
@@ -365,7 +401,8 @@ components:
   schemas:
     Name: { type: string, pattern: '^[\p{L}\p{N}_-]{1,24}$' }
     Kind: { type: string, enum: [bot, human] }
-    Seat: { type: integer, enum: [0, 1, 2] }
+    Seat: { type: integer, minimum: 0, maximum: 5, description: '0-2 for ddz, 0-3 for ddz4, 0..seats-1 for holdem' }
+    GameType: { type: string, enum: [ddz, ddz4, holdem], default: ddz, description: "ddz = 3-player Dou Dizhu, ddz4 = 4-player Dou Dizhu, holdem = No-Limit Texas Hold'em" }
     Card:
       type: string
       description: Rank 3456789TJQKA2 + suit SHCD; BJ = small joker, RJ = big joker
@@ -412,10 +449,12 @@ components:
         token: { type: string, description: Shown only once }
     RoomConfig:
       type: object
-      required: [bid_timeout_ms, play_timeout_ms, legal_moves_api, auto_restart]
+      required: [legal_moves_api, auto_restart]
       properties:
-        bid_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 10000 }
-        play_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 20000 }
+        bid_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 10000, description: Dou Dizhu only }
+        play_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 20000, description: Dou Dizhu only }
+        seats: { type: integer, minimum: 2, maximum: 6, default: 6, description: "Texas Hold'em only" }
+        action_timeout_ms: { type: integer, minimum: 1000, maximum: 120000, default: 15000, description: "Texas Hold'em only" }
         legal_moves_api: { type: boolean, default: true }
         auto_restart: { type: boolean, default: true }
     RoomConfigInput:
@@ -423,6 +462,8 @@ components:
       properties:
         bid_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
         play_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
+        seats: { type: integer, minimum: 2, maximum: 6 }
+        action_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
         legal_moves_api: { type: boolean }
         auto_restart: { type: boolean }
     SeatInfo:
@@ -439,15 +480,16 @@ components:
         score: { type: integer, description: Cumulative score in this room }
     Room:
       type: object
-      required: [id, name, status, seats, spectators, game_id, games_played, config]
+      required: [id, name, game, status, seats, spectators, game_id, games_played, config]
       properties:
         id: { type: string }
         name: { type: string }
+        game: { $ref: '#/components/schemas/GameType' }
         status: { type: string, enum: [waiting, playing] }
         seats:
           type: array
-          minItems: 3
-          maxItems: 3
+          minItems: 2
+          maxItems: 6
           items: { oneOf: [{ $ref: '#/components/schemas/SeatInfo' }, { type: 'null' }] }
         spectators: { type: integer }
         game_id: { type: [string, 'null'] }
@@ -477,6 +519,7 @@ components:
         scores: { type: array, items: { type: integer }, minItems: 3, maxItems: 3 }
     PublicGame:
       type: object
+      description: "Dou Dizhu (ddz / ddz4) view. Texas Hold'em games have different fields (button, board, pot, stacks...); see docs/api.md section 9.3."
       required: [game_id, room_id, phase, players, first_bidder, bids, high_bid, landlord, bottom, turn, deadline, remaining_ms, to_beat, can_pass, cards_left, multiplier, history, result, seq, turn_seq]
       properties:
         game_id: { type: string }

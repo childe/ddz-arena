@@ -87,19 +87,36 @@ def group_by_rank(cards: Iterable[str]) -> Dict[int, List[str]]:
 
 
 def contains_all(hand: Sequence[str], cards: Sequence[str]) -> bool:
-    """True if every card in ``cards`` is distinct and present in ``hand``."""
-    hs = set(hand)
-    seen = set()
+    """True if ``cards`` is a sub-multiset of ``hand``.
+
+    Each copy in ``cards`` needs its own copy in ``hand``. With one deck (3-player game)
+    every card appears once, so this is plain containment without duplicates; in the
+    two-deck 4-player game ``["3S", "3S"]`` is fine when the hand holds both copies.
+    """
+    avail: Dict[str, int] = {}
+    for c in hand:
+        avail[c] = avail.get(c, 0) + 1
     for c in cards:
-        if c not in hs or c in seen:
+        n = avail.get(c, 0)
+        if n == 0:
             return False
-        seen.add(c)
+        avail[c] = n - 1
     return True
 
 
 def remove_cards(hand: Sequence[str], cards: Iterable[str]) -> List[str]:
-    rm = set(cards)
-    return [c for c in hand if c not in rm]
+    """Remove one copy from ``hand`` per entry in ``cards`` (cards not in hand are ignored)."""
+    rm: Dict[str, int] = {}
+    for c in cards:
+        rm[c] = rm.get(c, 0) + 1
+    out: List[str] = []
+    for c in hand:
+        n = rm.get(c, 0)
+        if n:
+            rm[c] = n - 1
+        else:
+            out.append(c)
+    return out
 
 
 def pick_by_ranks(hand: Sequence[str], ranks: Iterable[int]) -> List[str]:
@@ -114,10 +131,16 @@ def pick_by_ranks(hand: Sequence[str], ranks: Iterable[int]) -> List[str]:
     return sort_cards(out)
 
 
+def full_deck4() -> List[str]:
+    """The 108 cards of the 4-player game: every code twice."""
+    return list(ALL_CARDS) + list(ALL_CARDS)
+
+
 def parse_short(s: str) -> List[str]:
     """Test/debug helper: ``"334X D"`` -> ``["3S","3H","4S","BJ","RJ"]``.
 
-    Rank chars get suits assigned in order S,H,C,D; ``X`` = BJ, ``D`` = RJ; spaces ignored.
+    Rank chars get suits assigned in order S,H,C,D (then S,H,C,D again for the second
+    deck of the 4-player game); ``X`` = BJ, ``D`` = RJ; spaces ignored.
     """
     used: Dict[str, int] = {}
     out: List[str] = []
@@ -131,5 +154,5 @@ def parse_short(s: str) -> List[str]:
         else:
             i = used.get(ch, 0)
             used[ch] = i + 1
-            out.append(ch + SUITS[i])
+            out.append(ch + (SUITS + SUITS)[i])
     return out

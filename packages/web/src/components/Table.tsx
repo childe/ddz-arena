@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from 'react';
 import type { Card } from '../api.ts';
-import { type TableState, seatName } from '../state.ts';
+import { type TableState, ddzBottomSize, ddzSeats, seatName } from '../state.ts';
 import { Hand, PlayingCard, patternName } from './Card.tsx';
 import { CountdownRing } from './Countdown.tsx';
 
@@ -13,8 +13,9 @@ export interface TableProps {
   showTimers: boolean;
   /** Viewer's own seat when playing (hand drawn large and clickable). */
   mySeat?: number | null;
-  selected?: Set<Card>;
-  onToggle?: (c: Card) => void;
+  /** Selected occurrence keys of own hand (see cardKeys). */
+  selected?: Set<string>;
+  onToggle?: (key: string) => void;
   /** Extra control under a seat (e.g. 入座 button for an empty seat). */
   seatExtra?: (seat: number) => ReactNode;
   /** Controls row above own hand (bid / play buttons). */
@@ -25,17 +26,35 @@ export interface TableProps {
   idleText?: string;
 }
 
+/** Seat count of the Dou Dizhu table (3 or 4). */
+export function tableSeats(state: TableState): number {
+  return state.game?.n ?? state.room?.seats.length ?? ddzSeats(state.gameType);
+}
+
 export function Table(props: TableProps) {
   const { state, viewSeat } = props;
-  const right = (viewSeat + 1) % 3;
-  const left = (viewSeat + 2) % 3;
+  const n = tableSeats(state);
+  // Play order goes counter-clockwise on screen: the next seat sits on the right.
+  const right = (viewSeat + 1) % n;
+  const top = n === 4 ? (viewSeat + 2) % n : null;
+  const left = (viewSeat + n - 1) % n;
   return (
-    <div className="table">
+    <div className={`table${n === 4 ? ' table-4' : ''}`}>
+      {top !== null && (
+        <div className="seat-area seat-top">
+          <SeatPanel {...props} seat={top} side />
+        </div>
+      )}
       <div className="seat-area seat-left">
         <SeatPanel {...props} seat={left} side />
       </div>
       <div className="table-center">
         <CenterInfo state={state} />
+        {top !== null && (
+          <div className="center-plays-top">
+            <PlaySlot state={state} seat={top} pos="top" />
+          </div>
+        )}
         <div className="center-plays">
           <PlaySlot state={state} seat={left} pos="left" />
           <PlaySlot state={state} seat={right} pos="right" />
@@ -61,12 +80,16 @@ export function Table(props: TableProps) {
 function CenterInfo({ state }: { state: TableState }) {
   const g = state.game;
   const bottom = g?.bottom;
+  const n = tableSeats(state);
+  const spread = n === 4 ? 0.62 : 1.12;
   return (
     <div className="center-info">
-      <div className="bottom-cards" title="底牌">
-        {bottom && bottom.length
-          ? bottom.map((c) => <PlayingCard key={c} code={c} size="sm" />)
-          : [0, 1, 2].map((i) => <PlayingCard key={i} back size="sm" />)}
+      <div className={`bottom-cards bottom-${ddzBottomSize(n)}`} title="底牌">
+        {bottom && bottom.length ? (
+          <Hand cards={bottom} size="sm" spread={spread} />
+        ) : (
+          <Hand backs={ddzBottomSize(n)} size="sm" spread={spread} />
+        )}
       </div>
       {g && (
         <div className="chips">
@@ -80,7 +103,7 @@ function CenterInfo({ state }: { state: TableState }) {
   );
 }
 
-function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 'left' | 'right' | 'bottom' }) {
+function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 'left' | 'right' | 'bottom' | 'top' }) {
   const g = state.game;
   if (!g) return <div className={`play-slot play-${pos}`} />;
   let body: ReactNode = null;
@@ -98,7 +121,7 @@ function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 
           <div className="played" key={p.key}>
             <Hand cards={p.cards} size="sm" spread={0.5} animate />
             <span className="pattern-name">
-              {patternName(p.pattern)}
+              {patternName(p.pattern, state.gameType)}
               {p.auto ? '（代出）' : ''}
             </span>
           </div>
@@ -141,7 +164,7 @@ function SeatPanel(props: TableProps & { seat: number; side?: boolean }) {
     if (isMine && known) {
       handView = <Hand cards={known} size="lg" selected={props.selected} onToggle={props.onToggle} className="my-hand" />;
     } else if (known && (reveal || g.phase === 'finished')) {
-      handView = <Hand cards={known} size={side ? 'xs' : 'md'} rows={side && known.length > 10 ? 2 : 1} />;
+      handView = <Hand cards={known} size={side ? 'xs' : 'md'} rows={side && known.length > 10 ? Math.ceil(known.length / 12) : 1} />;
     } else if (left > 0) {
       handView = side ? (
         <div className="back-stack" title={`剩余 ${left} 张`}>
@@ -208,12 +231,13 @@ function ResultPanel({ state, footer }: { state: TableState; footer?: ReactNode 
       ×
     </button>
   );
+  const n = g.n;
   if (r.kind === 'nobid') {
     return (
       <div className="result-panel">
         {close}
         <h3>流局</h3>
-        <p>三家都不叫</p>
+        <p>{n === 4 ? '四家都不叫' : '三家都不叫'}</p>
         {footer}
       </div>
     );
@@ -232,7 +256,7 @@ function ResultPanel({ state, footer }: { state: TableState; footer?: ReactNode 
       </div>
       <table className="result-table">
         <tbody>
-          {[0, 1, 2].map((s) => (
+          {Array.from({ length: n }, (_, s) => (
             <tr key={s} className={r.winner_seat === s ? 'winner' : ''}>
               <td>
                 {seatName(state, s)}

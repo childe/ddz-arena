@@ -43,7 +43,7 @@ export function History({ state, entries }: { state: TableState; entries?: LogEn
                   <span className="muted">不出</span>
                 ) : (
                   <>
-                    <span className="log-pattern">{patternName(e.pattern)}</span>
+                    <span className="log-pattern">{patternName(e.pattern, state.gameType)}</span>
                     <Hand cards={e.cards} size="xs" spread={0.6} className="inline-hand" />
                   </>
                 )}
@@ -53,7 +53,7 @@ export function History({ state, entries }: { state: TableState; entries?: LogEn
           case 'redeal':
             return (
               <div key={e.key} className="log-row log-sys">
-                三家都不叫，重新发牌（第 {e.count} 次）
+                {state.gameType === 'ddz4' ? '四家' : '三家'}都不叫，重新发牌（第 {e.count} 次）
               </div>
             );
           case 'finish':

@@ -274,3 +274,158 @@ describe('auto restart with disconnected bots', () => {
     [listeners[0]!, spec, back1, back2].forEach((l) => l.close());
   }, 30000);
 });
+
+/** Seats `n` fresh bots in a new room of `game` and readies them; returns the started game id. */
+async function startTable(game: string, n: number, config?: Record<string, unknown>) {
+  const bots = [];
+  for (let i = 0; i < n; i++) bots.push(await makeBot());
+  const created = await api('POST', '/api/v1/rooms', bots[0]!.token, { game, config });
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const room = created.body;
+  const listeners = [];
+  for (const [i, b] of bots.entries()) {
+    const l = new Listener(`${wsBase}/ws?token=${b.token}`);
+    await l.open();
+    listeners.push(l);
+    expect((await api('POST', `/api/v1/rooms/${room.id}/join`, b.token, { seat: i })).status).toBe(200);
+  }
+  const spec = new Listener(`${wsBase}/ws/spectate?room=${room.id}`);
+  await spec.open();
+  for (const b of bots) await api('POST', `/api/v1/rooms/${room.id}/ready`, b.token, {});
+  const started = await spec.wait((e) => e.type === 'game.started');
+  return { bots, room, listeners, spec, gid: started.game_id };
+}
+
+describe('game types', () => {
+  it('rejects unknown game types and keeps quick-join within a type', async () => {
+    const b = await makeBot();
+    expect((await api('POST', '/api/v1/rooms', b.token, { game: 'chess' })).status).toBe(400);
+    const r4 = (await api('POST', '/api/v1/rooms', b.token, { game: 'ddz4' })).body;
+    expect(r4.game).toBe('ddz4');
+    expect(r4.seats).toHaveLength(4);
+    const q = (await api('POST', '/api/v1/rooms/quick-join', b.token, {})).body;
+    expect(q.room.game).toBe('ddz');
+    expect(q.room.id).not.toBe(r4.id);
+    await api('POST', `/api/v1/rooms/${q.room.id}/leave`, b.token, {});
+    const q4 = (await api('POST', '/api/v1/rooms/quick-join', b.token, { game: 'ddz4' })).body;
+    expect(q4.room.game).toBe('ddz4');
+    await api('POST', `/api/v1/rooms/${q4.room.id}/leave`, b.token, {});
+  });
+
+  it('plays a 4-player Dou Dizhu game to the end', async () => {
+    const { bots, listeners, spec, gid } = await startTable('ddz4', 4, { auto_restart: false });
+    const started = await Promise.all(listeners.map((l) => l.wait((e) => e.type === 'game.started')));
+    started.forEach((e) => expect(e.data.hand).toHaveLength(25));
+    expect((spec.events.find((e) => e.type === 'game.started')!).data.hand).toBeUndefined();
+    const st = (await api('GET', `/api/v1/games/${gid}/state`, bots[0]!.token)).body;
+    expect(st.game).toBe('ddz4');
+    expect(st.cards_left).toEqual([25, 25, 25, 25]);
+    expect((await api('POST', `/api/v1/games/${gid}/bid`, bots[st.first_bidder]!.token, { score: 3 })).status).toBe(200);
+    const decided = await spec.wait((e) => e.type === 'landlord.decided');
+    expect(decided.data.bottom).toHaveLength(8);
+    for (let steps = 0; ; steps++) {
+      const s = (await api('GET', `/api/v1/games/${gid}`)).body;
+      if (s.phase === 'finished') break;
+      const bot = bots[s.turn]!;
+      const moves = (await api('GET', `/api/v1/games/${gid}/legal-moves`, bot.token)).body.moves;
+      const r = await api('POST', `/api/v1/games/${gid}/play`, bot.token, { cards: moves[0]?.cards ?? [] });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      if (steps > 400) throw new Error('too many steps');
+    }
+    const fin = await spec.wait((e) => e.type === 'game.finished');
+    const scores = fin.data.result.scores as number[];
+    expect(scores).toHaveLength(4);
+    expect(scores.reduce((a, b) => a + b, 0)).toBe(0);
+    const lb = (await api('GET', '/api/v1/leaderboard?game=ddz4')).body;
+    expect(lb.game).toBe('ddz4');
+    expect(lb.bots.find((b: any) => b.bot_id === bots[0]!.bot_id).games).toBe(1);
+    const lb3 = (await api('GET', '/api/v1/leaderboard')).body.bots;
+    expect(lb3.find((b: any) => b.bot_id === bots[0]!.bot_id)).toBeUndefined();
+    const games = (await api('GET', `/api/v1/games?game=ddz4&bot_id=${bots[0]!.bot_id}`)).body.games;
+    expect(games[0].game).toBe('ddz4');
+    expect(games[0].players).toHaveLength(4);
+    const rep = (await api('GET', `/api/v1/games/${gid}/replay`)).body;
+    expect(rep.initial_hands).toHaveLength(4);
+    [...listeners, spec].forEach((l) => l.close());
+  }, 30000);
+});
+
+describe("Texas Hold'em", () => {
+  it('plays hands with private hole cards, a moving button and validation', async () => {
+    const bots = [await makeBot(), await makeBot(), await makeBot()];
+    const room = (await api('POST', '/api/v1/rooms', bots[0]!.token, { game: 'holdem', config: { seats: 6 } })).body;
+    expect(room.seats).toHaveLength(6);
+    const seats = [0, 2, 4];
+    const listeners = [];
+    for (const [i, b] of bots.entries()) {
+      const l = new Listener(`${wsBase}/ws?token=${b.token}`);
+      await l.open();
+      listeners.push(l);
+      expect((await api('POST', `/api/v1/rooms/${room.id}/join`, b.token, { seat: seats[i] })).status).toBe(200);
+    }
+    const spec = new Listener(`${wsBase}/ws/spectate?room=${room.id}`);
+    await spec.open();
+    for (const b of bots) await api('POST', `/api/v1/rooms/${room.id}/ready`, b.token, {});
+    const started = await spec.wait((e) => e.type === 'game.started');
+    expect(started.data.hole).toBeUndefined();
+    expect(started.data.stacks).toHaveLength(6);
+    expect(started.data.stacks[1]).toBeNull();
+    const mine = await listeners[0]!.wait((e) => e.type === 'game.started');
+    expect(mine.data.hole).toHaveLength(2);
+    const gid = started.game_id;
+    const button1 = started.data.button;
+
+    const botAt = (seat: number) => bots[seats.indexOf(seat)]!;
+    const s0 = (await api('GET', `/api/v1/games/${gid}`)).body;
+    expect(s0.game).toBe('holdem');
+    expect(s0.phase).toBe('preflop');
+    const actor = botAt(s0.turn);
+    // Wrong verb, bad action, too-small raise, then a legal min raise.
+    expect((await api('POST', `/api/v1/games/${gid}/play`, actor.token, { cards: [] })).status).toBe(400);
+    expect((await api('POST', `/api/v1/games/${gid}/action`, actor.token, { action: 'dance' })).body.error.code).toBe('BAD_ACTION');
+    expect((await api('POST', `/api/v1/games/${gid}/action`, actor.token, { action: 'check' })).body.error.code).toBe('CANNOT_CHECK');
+    const me = (await api('GET', `/api/v1/games/${gid}/state`, actor.token)).body;
+    expect(me.hole).toHaveLength(2);
+    expect(me.legal.to_call).toBe(2);
+    expect((await api('POST', `/api/v1/games/${gid}/action`, actor.token, { action: 'raise', amount: me.legal.min_raise_to - 1 })).body.error.code).toBe('BAD_AMOUNT');
+    expect((await api('POST', `/api/v1/games/${gid}/action`, actor.token, { action: 'raise', amount: me.legal.min_raise_to })).status).toBe(200);
+
+    // Everyone else calls / checks down to showdown.
+    for (let steps = 0; ; steps++) {
+      const s = (await api('GET', `/api/v1/games/${gid}`)).body;
+      if (s.phase === 'finished') break;
+      const b = botAt(s.turn);
+      const st = (await api('GET', `/api/v1/games/${gid}/state`, b.token)).body;
+      const r = await api('POST', `/api/v1/games/${gid}/action`, b.token, { action: st.legal.can_check ? 'check' : 'call', seq: st.seq });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      if (steps > 50) throw new Error('too many steps');
+    }
+    const fin = await spec.wait((e) => e.type === 'game.finished');
+    const scores = fin.data.result.scores as (number | null)[];
+    expect(scores[1]).toBeNull();
+    expect(scores.reduce((a: number, b) => a + (b ?? 0), 0)).toBe(0);
+    expect(fin.data.result.showdown).toHaveLength(3);
+    expect(spec.events.filter((e) => e.type === 'board').map((e) => e.data.phase)).toEqual(['flop', 'turn', 'river']);
+    // `bet` is the seat's street total even for the action that closes the street.
+    const preflopActs = spec.events.filter((e) => e.type === 'acted' && e.game_id === gid && e.data.phase === 'preflop');
+    expect(preflopActs.at(-1)!.data.bet).toBe(preflopActs[0]!.data.amount);
+
+    // Next hand starts automatically with the button moved clockwise.
+    const next = await spec.wait((e) => e.type === 'game.started' && e.game_id !== gid, 8000);
+    expect(next.data.button).toBe(seats[(seats.indexOf(button1) + 1) % 3]);
+    const rep = (await api('GET', `/api/v1/games/${gid}/replay`)).body;
+    expect(rep.holes.filter((h: unknown) => h !== null)).toHaveLength(3);
+    expect((await api('GET', `/api/v1/games/${gid}`)).body.holes).toBeUndefined();
+    const lb = (await api('GET', '/api/v1/leaderboard?game=holdem')).body.bots;
+    expect(lb.find((b: any) => b.bot_id === bots[0]!.bot_id).games).toBe(1);
+
+    // A bot that joins mid-hand sits out and gets no hole cards for it.
+    const late = await makeBot();
+    const lateWs = new Listener(`${wsBase}/ws?token=${late.token}`);
+    await lateWs.open();
+    expect((await api('POST', `/api/v1/rooms/${room.id}/join`, late.token, { seat: 5 })).status).toBe(200);
+    expect((await api('GET', `/api/v1/games/${next.game_id}/state`, late.token)).status).toBe(403);
+    expect(lateWs.events.some((e) => e.type === 'game.started' && e.data.hole)).toBe(false);
+    [...listeners, spec, lateWs].forEach((l) => l.close());
+  }, 30000);
+});

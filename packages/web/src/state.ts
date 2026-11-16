@@ -1,7 +1,26 @@
 // Pure table state: built from a snapshot (GET room / game / replay) and advanced by events.
 // Shared by the live room view and the replay view.
-import { sortCards } from '@ddz/engine';
-import type { Card, GameResult, Phase, Player, PlayRecord, PublicGame, Replay, Room, WsEvent } from './api.ts';
+import { removeCards4, sortCards } from '@ddz/engine';
+import {
+  type AnyPublicGame,
+  type AnyReplay,
+  type Card,
+  type GameResult,
+  type GameType,
+  type HoldemLegal,
+  type HoldemPublicGame,
+  type HoldemReplay,
+  type Phase,
+  type Player,
+  type PlayRecord,
+  type PublicGame,
+  type Replay,
+  type Room,
+  type WsEvent,
+  gameTypeOf,
+  isHoldemGame,
+} from './api.ts';
+import { type HoldemView, applyHoldemEvent, buildHoldemReplayStates, holdemFromSnapshot } from './holdemState.ts';
 
 export interface PlayView extends PlayRecord {
   /** Unique key so the card animation re-runs for each new play. */
@@ -21,6 +40,8 @@ export interface GameView {
   game_id: string;
   phase: Phase;
   players: Player[];
+  /** Number of seats: 3 (ddz) or 4 (ddz4). */
+  n: number;
   first_bidder: number | null;
   bids: { seat: number; score: number; auto?: boolean }[];
   high_bid: number;
@@ -49,21 +70,41 @@ export interface GameView {
 
 export interface TableState {
   room: Room | null;
+  /** Game type of the room / replay; decides which reducer and table are used. */
+  gameType: GameType;
+  /** Dou Dizhu (ddz / ddz4) game. */
   game: GameView | null;
+  /** Hold'em hand. */
+  holdem: HoldemView | null;
   /** Last applied event seq (0 = unknown). */
   seq: number;
   /** bot_id of the viewer, to place `game.started.hand`. */
   viewer: string | null;
 }
 
-export const emptyTable = (viewer: string | null = null): TableState => ({ room: null, game: null, seq: 0, viewer });
+export const emptyTable = (viewer: string | null = null): TableState => ({
+  room: null,
+  gameType: 'ddz',
+  game: null,
+  holdem: null,
+  seq: 0,
+  viewer,
+});
 
-const three = <T,>(v: T): T[] => [v, v, v];
+const fill = <T,>(n: number, v: T): T[] => Array.from({ length: n }, () => v);
 
-function newGame(game_id: string, players: Player[], first_bidder: number | null, cards_left: number[] | null, now: number): GameView {
+/** Seats of a Dou Dizhu game type. */
+export const ddzSeats = (t: GameType): number => (t === 'ddz4' ? 4 : 3);
+/** Cards dealt per player (before the bottom). */
+export const ddzHandSize = (n: number): number => (n === 4 ? 25 : 17);
+/** Bottom cards. */
+export const ddzBottomSize = (n: number): number => (n === 4 ? 8 : 3);
+
+function newGame(game_id: string, players: Player[], first_bidder: number | null, cards_left: number[] | null, now: number, n: number): GameView {
   return {
     game_id,
     phase: 'bidding',
+    n,
     players: players.map((p, i) => ({ ...p, seat: typeof p.seat === 'number' ? p.seat : i })),
     first_bidder,
     bids: [],
@@ -75,14 +116,14 @@ function newGame(game_id: string, players: Player[], first_bidder: number | null
     clock_at: now,
     to_beat: null,
     can_pass: false,
-    cards_left: cards_left ?? [17, 17, 17],
+    cards_left: cards_left ?? fill(n, ddzHandSize(n)),
     multiplier: 1,
     history: [],
     result: null,
     turn_seq: 0,
-    last_plays: three(null),
-    last_bids: three(null),
-    hands: three(null),
+    last_plays: fill(n, null),
+    last_bids: fill(n, null),
+    hands: fill(n, null),
     redeals: 0,
     log: [{ key: `start-${game_id}-${now}`, kind: 'start', first_bidder }],
   };
@@ -90,7 +131,7 @@ function newGame(game_id: string, players: Player[], first_bidder: number | null
 
 /** Puts a play/pass into the per-seat "current trick" view, clearing it when the seat leads. */
 function trackTrick(last: (PlayView | null)[], lastNonPass: number | null, rec: PlayView): (PlayView | null)[] {
-  const out = rec.cards.length > 0 && (lastNonPass === null || lastNonPass === rec.seat) ? three<PlayView | null>(null) : [...last];
+  const out = rec.cards.length > 0 && (lastNonPass === null || lastNonPass === rec.seat) ? fill<PlayView | null>(last.length, null) : [...last];
   out[rec.seat] = rec;
   return out;
 }
@@ -101,7 +142,7 @@ function lastNonPassSeat(history: PlayRecord[]): number | null {
 }
 
 function normCardsLeft(prev: number[], v: unknown, seat?: number): number[] {
-  if (Array.isArray(v) && v.length === 3) return v.map(Number);
+  if (Array.isArray(v) && v.length === prev.length) return v.map(Number);
   if (typeof v === 'number' && seat !== undefined) {
     const out = [...prev];
     out[seat] = v;
@@ -111,8 +152,10 @@ function normCardsLeft(prev: number[], v: unknown, seat?: number): number[] {
 }
 
 /** Builds the game view from a PublicGame / PlayerGame snapshot. */
-export function gameFromSnapshot(g: PublicGame, now: number, ownHand?: { seat: number; hand: Card[] }): GameView {
-  const v = newGame(g.game_id, g.players ?? [], g.first_bidder ?? null, g.cards_left ?? null, now);
+export function gameFromSnapshot(g: PublicGame, now: number, ownHand?: { seat: number; hand: Card[] }, nSeats?: number): GameView {
+  const n = nSeats ?? (Array.isArray(g.cards_left) && g.cards_left.length >= 3 ? g.cards_left.length : ddzSeats(gameTypeOf(g.game)));
+  const cl = Array.isArray(g.cards_left) && g.cards_left.length === n ? g.cards_left : null;
+  const v = newGame(g.game_id, g.players ?? [], g.first_bidder ?? null, cl, now, n);
   v.phase = g.phase;
   v.bids = [...(g.bids ?? [])];
   v.high_bid = g.high_bid ?? 0;
@@ -140,7 +183,7 @@ export function gameFromSnapshot(g: PublicGame, now: number, ownHand?: { seat: n
     log.push({ key: `h${i}`, kind: 'play', seat: h.seat, cards: h.cards, pattern: h.pattern });
   });
   if (v.phase === 'playing' && v.turn !== null) {
-    if (!v.to_beat) v.last_plays = three(null);
+    if (!v.to_beat) v.last_plays = fill(n, null);
     else v.last_plays[v.turn] = null;
   }
   if (v.result) log.push({ key: 'fin', kind: 'finish', result: v.result });
@@ -149,19 +192,25 @@ export function gameFromSnapshot(g: PublicGame, now: number, ownHand?: { seat: n
   return v;
 }
 
-export function tableFromSnapshot(
-  room: Room | null,
-  game: PublicGame | null,
-  viewer: string | null,
-  now: number,
-  ownHand?: { seat: number; hand: Card[] },
-): TableState {
-  return {
-    room,
-    game: game ? gameFromSnapshot(game, now, ownHand) : null,
-    seq: game?.seq ?? 0,
-    viewer,
-  };
+/** Own private data from GET /games/{gid}/state: `hand` (Dou Dizhu) or `hole` + `legal` (Hold'em). */
+export interface OwnView {
+  seat: number;
+  hand?: Card[];
+  hole?: Card[];
+  legal?: HoldemLegal;
+}
+
+export function tableFromSnapshot(room: Room | null, game: AnyPublicGame | null, viewer: string | null, now: number, own?: OwnView): TableState {
+  const gameType: GameType = room?.game ? gameTypeOf(room.game) : isHoldemGame(game) ? 'holdem' : gameTypeOf(game?.game);
+  const base: TableState = { room, gameType, game: null, holdem: null, seq: game?.seq ?? 0, viewer };
+  if (!game) return base;
+  if (gameType === 'holdem') {
+    const hole = own?.hole;
+    const ownH = own && hole ? { seat: own.seat, hole, legal: own.legal } : undefined;
+    return { ...base, holdem: holdemFromSnapshot(game as HoldemPublicGame, now, room?.seats.length, ownH) };
+  }
+  const ownHand = own && own.hand ? { seat: own.seat, hand: own.hand } : undefined;
+  return { ...base, game: gameFromSnapshot(game as PublicGame, now, ownHand, room ? room.seats.length : undefined) };
 }
 
 /** Applies one server event. Duplicate / old seqs are ignored. `now` is the local clock (or event ts in replays). */
@@ -173,11 +222,17 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
   const key = `e${seq}`;
 
   if (ev.type === 'room.updated') {
-    return d.room ? { ...s, room: d.room } : s;
+    if (!d.room) return s;
+    return { ...s, room: d.room, gameType: d.room.game ? gameTypeOf(d.room.game) : s.gameType };
+  }
+  if (state.gameType === 'holdem') {
+    const h = applyHoldemEvent(state.holdem, ev, seq, now, { viewer: state.viewer, roomSeats: state.room?.seats.length });
+    return h === state.holdem && ev.type !== 'game.started' ? s : { ...s, holdem: h };
   }
   if (ev.type === 'game.started') {
     const prev = state.game;
-    const g = newGame(ev.game_id ?? prev?.game_id ?? '', d.players ?? prev?.players ?? [], d.first_bidder ?? null, normCardsLeft([17, 17, 17], d.cards_left), now);
+    const n = state.room?.seats.length ?? prev?.n ?? (Array.isArray(d.cards_left) ? d.cards_left.length : ddzSeats(state.gameType));
+    const g = newGame(ev.game_id ?? prev?.game_id ?? '', d.players ?? prev?.players ?? [], d.first_bidder ?? null, normCardsLeft(fill(n, ddzHandSize(n)), d.cards_left), now, n);
     if (prev && prev.game_id === g.game_id && prev.phase !== 'finished') g.redeals = prev.redeals;
     if (Array.isArray(d.hand) && state.viewer) {
       const seat = g.players.find((p) => p.bot_id === state.viewer)?.seat ?? (state.room?.seats.findIndex((x) => x?.bot_id === state.viewer) ?? -1);
@@ -217,7 +272,7 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
       g.turn = d.landlord;
       g.remaining_ms = null;
       g.cards_left = [...g.cards_left];
-      g.cards_left[d.landlord] = (g.cards_left[d.landlord] ?? 17) + (d.bottom?.length ?? 3);
+      g.cards_left[d.landlord] = (g.cards_left[d.landlord] ?? ddzHandSize(g.n)) + (d.bottom?.length ?? ddzBottomSize(g.n));
       const own = g.hands[d.landlord];
       if (own && d.bottom) {
         g.hands = [...g.hands];
@@ -234,7 +289,7 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
       g.to_beat = d.to_beat ?? null;
       g.can_pass = !!d.can_pass;
       g.turn_seq = seq;
-      g.last_plays = g.to_beat ? g.last_plays.map((p, i) => (i === d.seat ? null : p)) : three(null);
+      g.last_plays = g.to_beat ? g.last_plays.map((p, i) => (i === d.seat ? null : p)) : fill(g.n, null);
       break;
     case 'played':
     case 'passed': {
@@ -252,9 +307,9 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
         g.to_beat = rec;
         const own = g.hands[d.seat];
         if (own) {
-          const rm = new Set(cards);
+          // Multiset removal: ddz4 hands can hold two copies of the same card.
           g.hands = [...g.hands];
-          g.hands[d.seat] = own.filter((c) => !rm.has(c));
+          g.hands[d.seat] = removeCards4(own, cards);
         }
       }
       if (g.turn === d.seat) g.remaining_ms = null;
@@ -272,7 +327,7 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
       g.remaining_ms = null;
       g.result = d.result ?? null;
       if (g.result && typeof g.result.multiplier === 'number' && g.result.kind === 'win') g.multiplier = g.result.multiplier;
-      if (Array.isArray(d.hands) && d.hands.length === 3) {
+      if (Array.isArray(d.hands) && d.hands.length === g.n) {
         g.hands = d.hands.map((h: Card[]) => sortCards(h ?? []));
         g.cards_left = g.hands.map((h) => h!.length);
       }
@@ -293,14 +348,25 @@ export function clockLeft(g: GameView, now: number): number | null {
 
 /** Display name for a seat, preferring the live room, then the game players. */
 export function seatName(state: TableState, seat: number): string {
-  return state.room?.seats[seat]?.name ?? state.game?.players.find((p) => p.seat === seat)?.name ?? `座位 ${seat}`;
+  return (
+    state.room?.seats[seat]?.name ??
+    state.game?.players.find((p) => p.seat === seat)?.name ??
+    state.holdem?.players.find((p) => p.seat === seat)?.name ??
+    `座位 ${seat}`
+  );
 }
 
 const REPLAY_SKIP = new Set(['hello', 'room.updated', 'resync', 'pong', 'reply']);
 
 /** Reconstructs every intermediate table state by replaying the events from the initial deal. */
-export function buildReplayStates(rep: Replay): TableState[] {
-  const initialHands = rep.initial_hands.map((h) => sortCards(h));
+export function buildReplayStates(rep0: AnyReplay): TableState[] {
+  if (isHoldemGame(rep0) || 'holes' in rep0) {
+    return buildHoldemReplayStates(rep0 as HoldemReplay).map((h, i) => ({ ...emptyTable(), gameType: 'holdem', holdem: h, seq: i }));
+  }
+  const rep = rep0 as Replay;
+  const initialHands = (rep.initial_hands ?? []).map((h) => sortCards(h));
+  const gameType: GameType = initialHands.length === 4 ? 'ddz4' : gameTypeOf(rep.game);
+  const n = initialHands.length >= 3 ? initialHands.length : ddzSeats(gameType);
   const players = rep.players ?? [];
   const blank: GameView = gameFromSnapshot(
     {
@@ -321,9 +387,11 @@ export function buildReplayStates(rep: Replay): TableState[] {
       players,
     },
     0,
+    undefined,
+    n,
   );
   blank.hands = initialHands.map((h) => [...h]);
-  let s: TableState = { room: null, game: blank, seq: 0, viewer: null };
+  let s: TableState = { ...emptyTable(), gameType, game: blank };
   const states = [s];
   for (const ev of rep.events ?? []) {
     if (REPLAY_SKIP.has(ev.type)) continue;

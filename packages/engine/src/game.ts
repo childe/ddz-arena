@@ -15,7 +15,10 @@ export type GameErrorCode =
   | 'CARDS_NOT_IN_HAND'
   | 'MUST_PLAY'
   | 'INVALID_PATTERN'
-  | 'CANNOT_BEAT';
+  | 'CANNOT_BEAT'
+  | 'BAD_ACTION'
+  | 'CANNOT_CHECK'
+  | 'BAD_AMOUNT';
 
 const STATUS: Record<GameErrorCode, number> = {
   WRONG_PHASE: 409,
@@ -27,6 +30,9 @@ const STATUS: Record<GameErrorCode, number> = {
   MUST_PLAY: 422,
   INVALID_PATTERN: 422,
   CANNOT_BEAT: 422,
+  BAD_ACTION: 400,
+  CANNOT_CHECK: 422,
+  BAD_AMOUNT: 422,
 };
 
 export class GameError extends Error {

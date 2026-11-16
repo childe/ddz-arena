@@ -1,5 +1,5 @@
 [Unit]
-Description=Dou Dizhu endless demo table (three bots in room "三机演示")
+Description=Game arena endless demo tables (ddz, ddz4, holdem)
 After=ddz.service
 Wants=ddz.service
 

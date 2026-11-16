@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"bot_id": "b_1", "name": "x", "kind": "bot"})
         if self.path.startswith("/api/v1/games?"):
             return self._send(200, {"games": [{"game_id": "g_1"}]})
-        if self.path == "/api/v1/leaderboard":
+        if self.path.startswith("/api/v1/leaderboard"):
             return self._send(200, {"bots": [{"bot_id": "b_1"}]})
         self._send(404, {"error": {"code": "NOT_FOUND", "message": "nope"}})
 
@@ -139,3 +139,43 @@ def test_network_error():
 def test_ws_url():
     assert Client("https://example.com/").ws_url == "wss://example.com"
     assert Client("http://h:8080").ws_url == "ws://h:8080"
+
+
+def test_game_type_parameters(base):
+    c = Client(base, "tok")
+    c.create_room("t1", {"seats": 4}, game="holdem")
+    assert Handler.log[-1][1:] == (
+        "/api/v1/rooms",
+        "Bearer tok",
+        {"name": "t1", "game": "holdem", "config": {"seats": 4}},
+    )
+    c.create_room("t2")  # old signature: no game field sent
+    assert Handler.log[-1][3] == {"name": "t2"}
+    c.create_room("t3", None, "ddz4")
+    assert Handler.log[-1][3] == {"name": "t3", "game": "ddz4"}
+    c.quick_join()
+    assert Handler.log[-1][1] == "/api/v1/rooms/quick-join" and Handler.log[-1][3] == {}
+    c.quick_join(game="ddz4")
+    assert Handler.log[-1][3] == {"game": "ddz4"}
+    c.leaderboard()
+    assert Handler.log[-1][1] == "/api/v1/leaderboard"
+    assert c.leaderboard(game="holdem")[0]["bot_id"] == "b_1"
+    assert Handler.log[-1][1] == "/api/v1/leaderboard?game=holdem"
+    c.list_games(limit=3, game="ddz4")
+    assert Handler.log[-1][1] == "/api/v1/games?limit=3&game=ddz4"
+    c.list_games(5, "b_1", "holdem")
+    assert Handler.log[-1][1] == "/api/v1/games?limit=5&bot_id=b_1&game=holdem"
+
+
+def test_holdem_action(base):
+    c = Client(base, "tok")
+    assert c.action("g_9", "raise", 12, seq=40) == {"ok": True, "seq": 1}
+    assert Handler.log[-1][1:] == (
+        "/api/v1/games/g_9/action",
+        "Bearer tok",
+        {"action": "raise", "amount": 12, "seq": 40},
+    )
+    c.action("g_9", "fold")
+    assert Handler.log[-1][3] == {"action": "fold"}
+    c.action("g_9", "call", seq=7)
+    assert Handler.log[-1][3] == {"action": "call", "seq": 7}

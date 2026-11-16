@@ -2,6 +2,15 @@
 
 export type Card = string;
 export type Phase = 'bidding' | 'playing' | 'finished';
+export type GameType = 'ddz' | 'ddz4' | 'holdem';
+
+export const GAME_TYPES: GameType[] = ['ddz', 'ddz4', 'holdem'];
+export const GAME_LABELS: Record<GameType, string> = { ddz: '三人斗地主', ddz4: '四人斗地主', holdem: '德州扑克' };
+
+/** Normalizes an unknown `game` field (missing = ddz, the server default). */
+export function gameTypeOf(v: unknown): GameType {
+  return v === 'ddz4' || v === 'holdem' ? v : 'ddz';
+}
 
 export interface ApiPattern {
   type: string;
@@ -23,6 +32,10 @@ export interface SeatInfo {
 export interface RoomConfig {
   bid_timeout_ms: number;
   play_timeout_ms: number;
+  /** Hold'em only. */
+  action_timeout_ms: number;
+  /** Hold'em only: number of seats (2–6). */
+  seats: number;
   legal_moves_api: boolean;
   auto_restart: boolean;
 }
@@ -30,6 +43,8 @@ export interface RoomConfig {
 export interface Room {
   id: string;
   name: string;
+  /** Missing on old servers: treat as ddz. */
+  game?: GameType;
   status: 'waiting' | 'playing' | string;
   seats: (SeatInfo | null)[];
   spectators: number;
@@ -68,6 +83,7 @@ export interface GameResult {
 export interface PublicGame {
   game_id: string;
   room_id: string;
+  game?: GameType;
   phase: Phase;
   players: Player[];
   first_bidder: number;
@@ -99,15 +115,108 @@ export interface Replay extends PublicGame {
   events: WsEvent[];
 }
 
+// ---- Hold'em (docs/api.md section 9) ----
+
+export type HoldemPhase = 'preflop' | 'flop' | 'turn' | 'river' | 'finished';
+export type HoldemAction = 'fold' | 'check' | 'call' | 'raise';
+
+export interface HoldemActionRecord {
+  seat: number;
+  phase: Exclude<HoldemPhase, 'finished'>;
+  action: HoldemAction | 'small_blind' | 'big_blind';
+  /** raise: raise-to total for the street; call / blinds: chips added; fold / check: 0. */
+  amount: number;
+  all_in: boolean;
+}
+
+export interface HoldemShowdownEntry {
+  seat: number;
+  hole: Card[];
+  best: Card[];
+  rank: string;
+  score: number;
+}
+
+export interface HoldemResult {
+  winners: number[];
+  scores: (number | null)[];
+  payouts: (number | null)[];
+  showdown: HoldemShowdownEntry[] | null;
+  pot: number;
+}
+
+/** Fields of the `turn` event (and PlayerGame.legal). */
+export interface HoldemLegal {
+  phase?: HoldemPhase;
+  to_call: number;
+  can_check: boolean;
+  min_raise_to: number | null;
+  max_raise_to: number | null;
+  current_bet: number;
+  pot: number;
+}
+
+export interface HoldemPublicGame {
+  game_id: string;
+  room_id: string;
+  game: 'holdem';
+  phase: HoldemPhase;
+  players: Player[];
+  turn: number | null;
+  deadline: number | null;
+  remaining_ms: number | null;
+  button: number;
+  small_blind_seat: number;
+  big_blind_seat: number;
+  small_blind: number;
+  big_blind: number;
+  board: Card[];
+  pot: number;
+  current_bet: number;
+  min_raise_to: number | null;
+  stacks: (number | null)[];
+  bets: (number | null)[];
+  committed: (number | null)[];
+  folded: (boolean | null)[];
+  all_in: (boolean | null)[];
+  history: HoldemActionRecord[];
+  result: HoldemResult | null;
+  seq: number;
+  turn_seq: number;
+}
+
+export interface HoldemPlayerGame extends HoldemPublicGame {
+  seat: number;
+  hole: Card[];
+  legal?: HoldemLegal;
+}
+
+export interface HoldemReplay extends HoldemPublicGame {
+  seed: string;
+  holes: (Card[] | null)[];
+  events: WsEvent[];
+}
+
+export type AnyPublicGame = PublicGame | HoldemPublicGame;
+export type AnyReplay = Replay | HoldemReplay;
+
+export function isHoldemGame(g: object | null | undefined): boolean {
+  if (!g) return false;
+  const x = g as { game?: unknown; button?: unknown };
+  return x.game === 'holdem' || (x.game === undefined && x.button !== undefined);
+}
+
 /**
  * docs/api.md does not define GameSummary; every field except game_id is treated as optional.
  */
 export interface GameSummary {
   game_id: string;
   room_id?: string;
+  game?: GameType;
   players?: Player[];
   landlord?: number | null;
-  result?: GameResult | null;
+  /** GameResult for ddz / ddz4, HoldemResult for holdem. */
+  result?: GameResult | HoldemResult | null;
   phase?: Phase;
   started_at?: number | string;
   finished_at?: number | string;
@@ -187,6 +296,10 @@ const ERROR_TEXT: Record<string, string> = {
   INVALID_PATTERN: '不成牌型',
   CANNOT_BEAT: '压不过上家',
   RATE_LIMITED: '操作太频繁',
+  LEGAL_MOVES_DISABLED: '房间关闭了合法出牌接口',
+  BAD_ACTION: '当前不能这样操作',
+  CANNOT_CHECK: '面对下注不能过牌',
+  BAD_AMOUNT: '加注额不合法',
 };
 
 /** Human-readable Chinese text for an error, keeping the server message for detail. */
@@ -236,9 +349,16 @@ export const api = {
   me: (token: string) => request<Me>('GET', '/me', { token }),
 
   rooms: () => request<{ rooms: Room[] }>('GET', '/rooms'),
-  room: (rid: string) => request<{ room: Room; game: PublicGame | null }>('GET', `/rooms/${encodeURIComponent(rid)}`),
-  createRoom: (token: string, name?: string) =>
-    request<Room>('POST', '/rooms', { token, body: name ? { name } : {} }),
+  room: (rid: string) => request<{ room: Room; game: AnyPublicGame | null }>('GET', `/rooms/${encodeURIComponent(rid)}`),
+  createRoom: (token: string, opts: { name?: string; game?: GameType; config?: Partial<RoomConfig> } = {}) =>
+    request<Room>('POST', '/rooms', {
+      token,
+      body: {
+        ...(opts.name ? { name: opts.name } : {}),
+        ...(opts.game ? { game: opts.game } : {}),
+        ...(opts.config && Object.keys(opts.config).length ? { config: opts.config } : {}),
+      },
+    }),
   join: (token: string, rid: string, seat?: number) =>
     request<{ room: Room; seat: number }>('POST', `/rooms/${encodeURIComponent(rid)}/join`, {
       token,
@@ -249,7 +369,7 @@ export const api = {
     request<{ room: Room }>('POST', `/rooms/${encodeURIComponent(rid)}/ready`, { token, body: { ready } }),
 
   game: (gid: string) => request<PublicGame>('GET', `/games/${encodeURIComponent(gid)}`),
-  gameState: (token: string, gid: string) => request<PlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
+  gameState: (token: string, gid: string) => request<PlayerGame | HoldemPlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
   bid: (token: string, gid: string, score: number, seq?: number) =>
     request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/bid`, { token, body: { score, seq } }),
   play: (token: string, gid: string, cards: Card[], seq?: number) =>
@@ -257,13 +377,19 @@ export const api = {
       token,
       body: { cards, seq },
     }),
-  replay: (gid: string) => request<Replay>('GET', `/games/${encodeURIComponent(gid)}/replay`),
-  games: (limit = 20, botId?: string) =>
+  action: (token: string, gid: string, action: HoldemAction, amount?: number, seq?: number) =>
+    request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/action`, {
+      token,
+      body: { action, ...(action === 'raise' ? { amount } : {}), seq },
+    }),
+  replay: (gid: string) => request<AnyReplay>('GET', `/games/${encodeURIComponent(gid)}/replay`),
+  games: (limit = 20, botId?: string, game?: GameType) =>
     request<{ games: GameSummary[] }>(
       'GET',
-      `/games?limit=${limit}${botId ? `&bot_id=${encodeURIComponent(botId)}` : ''}`,
+      `/games?limit=${limit}${botId ? `&bot_id=${encodeURIComponent(botId)}` : ''}${game ? `&game=${game}` : ''}`,
     ),
-  leaderboard: () => request<{ bots: LeaderboardRow[] }>('GET', '/leaderboard'),
+  leaderboard: (game: GameType = 'ddz') =>
+    request<{ game?: GameType; bots: LeaderboardRow[] }>('GET', `/leaderboard?game=${game}`),
 
   docs: async (): Promise<string> => {
     const res = await fetch(`${BASE}/docs`, { headers: { accept: 'text/markdown, text/plain, */*' } });

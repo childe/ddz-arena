@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { type Replay, ApiError, api, errorText } from '../api.ts';
+import { type AnyReplay, ApiError, GAME_LABELS, api, errorText } from '../api.ts';
 import { History } from '../components/History.tsx';
-import { Table } from '../components/Table.tsx';
+import { HoldemHistory, HoldemTable, holdemSeats } from '../components/HoldemTable.tsx';
+import { Table, tableSeats } from '../components/Table.tsx';
 import { href } from '../router.ts';
-import { buildReplayStates } from '../state.ts';
+import { buildReplayStates, seatName } from '../state.ts';
 
 const SPEEDS = [0.5, 1, 2, 4];
 
 export function ReplayPage({ gid }: { gid: string }) {
-  const [rep, setRep] = useState<Replay | null>(null);
+  const [rep, setRep] = useState<AnyReplay | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -77,6 +78,10 @@ export function ReplayPage({ gid }: { gid: string }) {
   if (!rep || !cur) return <div className="page muted">加载回放…</div>;
 
   const finalState = states[last]!;
+  const isHoldem = finalState.gameType === 'holdem';
+  const n = isHoldem ? holdemSeats(finalState) : tableSeats(finalState);
+  // Hold'em: only seats that played this hand.
+  const viewSeats = Array.from({ length: n }, (_, s) => s).filter((s) => !isHoldem || finalState.holdem?.stacks[s] !== null);
   return (
     <div className="page room-page">
       <div className="room-head">
@@ -84,6 +89,7 @@ export function ReplayPage({ gid }: { gid: string }) {
           ← 大厅
         </a>
         <h2>回放 {gid}</h2>
+        <span className={`badge game-badge game-${finalState.gameType}`}>{GAME_LABELS[finalState.gameType]}</span>
         {rep.room_id && (
           <a className="muted" href={href.room(rep.room_id)}>
             房间 {rep.room_id}
@@ -138,18 +144,22 @@ export function ReplayPage({ gid }: { gid: string }) {
           <input type="checkbox" checked={god} onChange={(e) => setGod(e.target.checked)} /> 上帝视角
         </label>
         <select value={viewSeat} onChange={(e) => setViewSeat(Number(e.target.value))} aria-label="底部座位">
-          {[0, 1, 2].map((s) => (
+          {viewSeats.map((s) => (
             <option key={s} value={s}>
-              底部：{finalState.game?.players.find((p) => p.seat === s)?.name ?? `座位 ${s}`}
+              底部：{seatName(finalState, s)}
             </option>
           ))}
         </select>
       </div>
       <div className="room-body">
-        <Table state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
+        {isHoldem ? (
+          <HoldemTable state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
+        ) : (
+          <Table state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
+        )}
         <aside className="room-side">
-          <h3>出牌记录</h3>
-          <History state={cur} />
+          <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
+          {isHoldem ? <HoldemHistory state={cur} /> : <History state={cur} />}
         </aside>
       </div>
     </div>

@@ -2,7 +2,7 @@
 
 Base URL：`https://ddz.ohmycat.me`（下文路径都相对于它），WebSocket 地址把 `https` 换成 `wss`（即 `wss://ddz.ohmycat.me`）。域名经过 Cloudflare 代理；也可以用 `http://43.128.99.230` 直连服务器。所有请求和响应都是 JSON。
 
-接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛。
+接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛；第 8、9 节是四人斗地主和德州扑克。
 
 | 资料 | 用途 |
 |---|---|
@@ -61,7 +61,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 |---|---|---|---|---|
 | POST | `/bots` | 否 | `{"name", "invite_code"}` | `201 {"bot_id","name","kind":"bot","token"}` |
 | POST | `/guests` | 否 | `{"name"}` | `201 {"bot_id","name","kind":"human","token"}`，网页真人玩家用 |
-| GET | `/me` | 是 | — | `{"bot_id","name","kind","room_id","seat","game_id"}` |
+| GET | `/me` | 是 | — | `{"bot_id","name","kind","room_id","game","seat","game_id"}`，`game` 是所在房间的游戏类型 |
 
 `name`：1–24 个字符，字母、数字、中文、`-`、`_`。
 
@@ -70,20 +70,28 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | 方法 | 路径 | 认证 | 请求 | 响应 |
 |---|---|---|---|---|
 | GET | `/rooms` | 否 | — | `{"rooms":[Room]}` |
-| POST | `/rooms` | 是 | `{"name"?, "config"?}` | `201 Room` |
+| POST | `/rooms` | 是 | `{"name"?, "game"?, "config"?}` | `201 Room` |
 | GET | `/rooms/{rid}` | 否 | — | `{"room":Room, "game":PublicGame或null, "seq":房间最新事件序号}` |
-| POST | `/rooms/quick-join` | 是 | — | `{"room":Room, "seat"}` |
+| POST | `/rooms/quick-join` | 是 | `{"game"?}` | `{"room":Room, "seat"}` |
 | POST | `/rooms/{rid}/join` | 是 | `{"seat"?}` | `{"room":Room, "seat"}` |
 | POST | `/rooms/{rid}/leave` | 是 | — | `{"ok":true}` |
 | POST | `/rooms/{rid}/ready` | 是 | `{"ready"?: true}` | `{"room":Room}` |
 
-`POST /rooms` 只建房，不会让创建者入座，创建者需要再调用 `/join`。一个 bot 同一时间只能坐在一个房间。两局之间离开房间会立即释放座位，并取消自动开下一局。三个座位都有人且都已准备时开局。`config.auto_restart` 为 `true`（默认）时，一局结束 3 秒后自动开下一局，不需要再次准备；但一局结束时没有连着 WebSocket 的座位会被设为未准备，房间停下来等它，它重新连上 WebSocket 后自动恢复准备。对局中离开房间，你的座位进入托管直到本局结束。房间空置 10 分钟后自动关闭。
+`game` 是游戏类型，默认 `ddz`：
+
+| `game` | 游戏 | 座位数 | 说明 |
+|---|---|---|---|
+| `ddz` | 三人斗地主 | 3 | 本文第 1–7 节 |
+| `ddz4` | 四人斗地主 | 4 | 第 8 节 |
+| `holdem` | 德州扑克（无限注） | `config.seats`，2–6，默认 6 | 第 9 节 |
+
+`quick-join` 只会进入同一游戏类型的房间。`POST /rooms` 只建房，不会让创建者入座，创建者需要再调用 `/join`。一个 bot 同一时间只能坐在一个房间。两局之间离开房间会立即释放座位，并取消自动开下一局。斗地主的所有座位都有人且都已准备时开局（德州扑克见第 9 节）。`config.auto_restart` 为 `true`（默认）时，一局结束 3 秒后自动开下一局，不需要再次准备；但一局结束时没有连着 WebSocket 的座位会被设为未准备，房间停下来等它，它重新连上 WebSocket 后自动恢复准备。对局中离开房间，你的座位进入托管直到本局结束。房间空置 10 分钟后自动关闭。
 
 `Room`：
 
 ```json
 {
-  "id": "r_ab12cd", "name": "room-1", "status": "waiting | playing",
+  "id": "r_ab12cd", "name": "room-1", "game": "ddz", "status": "waiting | playing",
   "seats": [{"seat":0,"bot_id":"b_x","name":"alpha","kind":"bot","ready":true,"connected":true,"trustee":false,"score":12}, null, null],
   "spectators": 3, "game_id": "g_xxx 或 null", "games_played": 7,
   "config": {"bid_timeout_ms":10000, "play_timeout_ms":20000, "legal_moves_api":true, "auto_restart":true}
@@ -102,8 +110,8 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/games/{gid}/play` | 是 | `{"cards":[...], "pattern"?:{"type"}, "seq"?}` | `{"ok":true,"seq","pattern"}` |
 | GET | `/games/{gid}` | 否 | — | `PublicGame`（进行中或已结束都可） |
 | GET | `/games/{gid}/replay` | 否 | — | `Replay`（仅已结束） |
-| GET | `/games?limit=20&bot_id=` | 否 | — | `{"games":[GameSummary]}` |
-| GET | `/leaderboard` | 否 | — | `{"bots":[{"bot_id","name","games","wins","landlord_games","landlord_wins","score","timeouts"}]}` |
+| GET | `/games?limit=20&bot_id=&game=` | 否 | — | `{"games":[GameSummary]}` |
+| GET | `/leaderboard?game=ddz` | 否 | — | `{"game","bots":[{"bot_id","name","games","wins","landlord_games","landlord_wins","score","timeouts"}]}`，按游戏类型分开统计，默认 `ddz` |
 
 牌局结束后，对它调用 `/state`、`/bid`、`/play` 返回 `409 WRONG_PHASE`，请改用 `/games/{gid}` 或 `/replay`。
 
@@ -129,7 +137,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 - 叫分阶段 `landlord`、`bottom` 为 `null`。`to_beat` 为 `null` 表示轮到的人首出。
 - `history` 里 `cards: []` 表示不出。
 
-`GameSummary`：`{"game_id","room_id","players":[{"seat","bot_id","name","kind"}],"result","started_at","finished_at"}`。
+`GameSummary`：`{"game_id","room_id","game","players":[{"seat","bot_id","name","kind"}],"result","started_at","finished_at"}`。
 
 `played` 事件里的 `cards_left` 和 `PublicGame.cards_left` 一样，是长度为 3 的数组。
 
@@ -179,7 +187,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 |---|---|---|
 | `hello` | `{"bot_id"?, "room_id", "seq"}` | 连接建立或入座时发送；顶层 `seq` 为 `null`，`data.seq` 是房间当前的最新序号 |
 | `room.updated` | `{"room": Room}` | 入座、离开、准备、托管、连接状态变化 |
-| `game.started` | `{"players", "first_bidder", "cards_left", "hand"?}` | `hand` 只发给对应玩家 |
+| `game.started` | `{"game", "players", "first_bidder", "cards_left", "hand"?}` | `hand` 只发给对应玩家 |
 | `bid.turn` | `{"seat", "deadline", "remaining_ms", "high_bid"}` | 轮到某人叫分 |
 | `bid.made` | `{"seat", "score", "auto"}` | `auto` 为 true 表示超时代叫 |
 | `landlord.decided` | `{"landlord", "bottom", "high_bid"}` | 底牌公开 |
@@ -317,15 +325,15 @@ on_close():
 
 ## 7. 约一场比赛
 
-想让自己的 bot 和别人的 bot 同桌对局，流程是：建一个房间，把房间号发给对方，各自的 bot 进入这个房间，三家都准备好后自动开局。一桌固定三家，两个人比赛时要再放一个 bot 凑数，例如自己再跑一个示例 bot。
+想让自己的 bot 和别人的 bot 同桌对局，流程是：建一个房间，把房间号发给对方，各自的 bot 进入这个房间，都准备好后自动开局。斗地主的座位必须坐满（三人版 3 家、四人版 4 家），人数不够时要自己再跑示例 bot 凑数；德州扑克 2 人以上就能开局。
 
 ### 7.1 建房间
 
 两种方式任选一种。
 
-**网页**：打开首页，在大厅点「新建房间」。第一次使用时先填一个游客名字，生成游客身份（不需要邀请码，身份保存在浏览器里）。填上房间名后点「新建房间」，页面会跳到这个房间，地址栏 `#/room/` 后面的 `r_xxxxxx` 就是房间号。网页建的房间使用默认规则。
+**网页**：打开首页，在大厅点「新建房间」。第一次使用时先填一个游客名字，生成游客身份（不需要邀请码，身份保存在浏览器里）。选择游戏类型，填上房间名（德州扑克还可以选座位数，「高级选项」里可以关闭 legal-moves 接口、调整时限）后点「新建房间」，页面会跳到这个房间，地址栏 `#/room/` 后面的 `r_xxxxxx` 就是房间号。
 
-**接口**：用任意 bot 的 token 调用 `POST /rooms`。需要修改规则时只能用这种方式。
+**接口**：用任意 bot 的 token 调用 `POST /rooms`。请求体里的 `game` 指定游戏类型，默认 `ddz`。
 
 ```bash
 curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
@@ -343,7 +351,9 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 | `legal_moves_api` | `true` | 设为 `false` 时关闭 `GET /games/{gid}/legal-moves`（调用返回 `403 LEGAL_MOVES_DISABLED`），要求 bot 自己实现出牌规则。服务端始终校验每一手牌 |
 | `bid_timeout_ms` | `10000` | 叫分时限，1000–120000 的整数 |
 | `play_timeout_ms` | `20000` | 出牌时限，1000–120000 的整数 |
-| `auto_restart` | `true` | 一局结束 3 秒后自动开下一局。设为 `false` 时，每局结束后三家都要重新调用 `/ready` |
+| `auto_restart` | `true` | 一局结束 3 秒后自动开下一局。设为 `false` 时，每局结束后所有人都要重新调用 `/ready` |
+| `seats` | `6` | 仅德州扑克：座位数，2–6 |
+| `action_timeout_ms` | `15000` | 仅德州扑克：每次行动的时限，1000–120000 的整数（斗地主用 `bid_timeout_ms` / `play_timeout_ms`） |
 
 ### 7.2 让 bot 进入指定房间
 
@@ -370,3 +380,121 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 - 房间只保存在服务端内存里。服务端重启后所有房间消失，需要重新建房间；已经打完的对局、回放和排行榜保存在数据库里，不受影响。
 - 房间里没有人入座、也没有人围观的状态持续 10 分钟，房间会自动关闭。建好房间后尽快把房间号发给对方，或者一直开着房间页面。
 - `auto_restart` 开启时，一局结束时没有连着 WebSocket 的 bot 会被设为未准备，房间停下来等它，重新连上后自动恢复。所以参赛 bot 要保持 WebSocket 连接。
+
+## 8. 四人斗地主（`game: "ddz4"`）
+
+四人斗地主的接口、事件和三人版完全相同：同样用 `/bid`、`/play`、`/legal-moves`，同样的 `bid.turn`、`turn`、`played`、`passed`、`landlord.decided`、`game.finished` 事件。区别只在规则和数组长度。
+
+| 项目 | 三人斗地主 | 四人斗地主 |
+|---|---|---|
+| 牌 | 一副 54 张 | 两副 108 张，同一张牌（例如 `3S`）最多有 2 张 |
+| 座位 | 0–2 | 0–3，出牌顺序 0→1→2→3→0 |
+| 手牌 / 底牌 | 每人 17 张，底牌 3 张 | 每人 25 张，底牌 8 张，地主 33 张 |
+| `cards_left`、`scores`、`initial_hands` | 3 个元素 | 4 个元素 |
+| 四带二 | 有 | 没有 |
+| 炸弹 | 4 张同点数 | 4–8 张同点数，`length` = 张数 |
+| 王炸（`rocket`） | 大小王 2 张 | 4 张王（天王炸），`length` = 4 |
+
+建房：`POST /rooms {"game":"ddz4"}`；快速入座：`POST /rooms/quick-join {"game":"ddz4"}`。4 个座位都有人且都已准备时开局。
+
+### 8.1 规则差异
+
+- 手牌是多重集合：手里有两张 `3S` 时，出牌可以写 `["3S","3S"]`。
+- `BJ BJ`、`RJ RJ` 是对子；`BJ RJ` 不是任何牌型。
+- 炸弹大小：天王炸 > 8 张炸弹 > 7 张 > 6 张 > 5 张 > 4 张；张数相同时比点数。炸弹能压任何非炸弹牌型。手里有 6 张同点数的牌时，可以出 4 张、5 张或 6 张的炸弹。
+- 带牌：翅膀不能包含主体（三张或飞机）的点数，也不能是全部 4 张王。带对子时，每个翅膀必须是 2 张同点数的牌，翅膀之间点数不同；`BJ BJ`、`RJ RJ` 可以当对子翅膀。带单张时，单张可以重复点数。
+- 叫分：每人依次叫一次，叫 3 分立即结束；4 人都不叫则重新发牌，连续 3 次都不叫时以 `nobid` 结束，`scores` 为 `[0,0,0,0]`。
+- 计分：倍数 = 2 的炸弹数次方（天王炸也算一个炸弹），春天或反春再 ×2。地主赢时每个农民 −底分×倍数，地主 +3×底分×倍数；农民赢时反过来。四家分数之和为 0。春天指 3 个农民都没出过牌，反春指地主只出过 1 手牌。
+
+### 8.2 参考实现
+
+规则引擎在 [`packages/engine/src/ddz4/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/ddz4)，判定以它为准。`legalMoves4` 能枚举所有合法出牌，可以作为移植参考。
+
+## 9. 德州扑克（`game: "holdem"`）
+
+无限注德州扑克，每桌 2–6 人。房间、入座、准备、围观、回放、重连的机制和斗地主相同；出牌改为下注动作，事件也不同。
+
+建房：`POST /rooms {"game":"holdem","config":{"seats":6}}`；快速入座：`POST /rooms/quick-join {"game":"holdem"}`。至少 2 人入座、且所有入座者都已准备时开局；一手牌进行中入座的人从下一手开始参加。`auto_restart` 开启时每手结束 3 秒后自动开下一手。
+
+### 9.1 规则
+
+- 一副 52 张，牌面编码是点数 `23456789TJQKA` + 花色 `SHCD`，例如 `AS`、`TD`。
+- 小盲 1、大盲 2。**每手牌开始时所有人的筹码都重置为 200**（100 个大盲），每手牌相互独立。
+- 庄位（`button`）每手顺时针移到下一个参与者。小盲在庄位左边，大盲再左边。两人对局时庄位下小盲，翻牌前先行动、翻牌后后行动。
+- 下注轮：`preflop`（每人 2 张底牌）→ `flop`（3 张公共牌）→ `turn`（1 张）→ `river`（1 张）→ 摊牌。
+- 动作：`fold` 弃牌、`check` 过牌、`call` 跟注、`raise` 下注或加注。`raise` 的 `amount` 是**本轮你的下注总额**（raise-to），不是增加的数额；全下就是 `raise` 到 `max_raise_to`。
+- 最小加注：加注后的总额至少是 `min_raise_to`，即当前最高下注 + 本轮上一次加注的幅度（翻牌前初始为大盲，翻牌后最小下注为大盲）。全下可以不满足最小加注；不足一次完整加注的全下不会让已经行动过的人重新获得加注权。
+- 只剩一人未弃牌时立即结束，不摊牌。所有人都全下或只剩一人能行动时，直接发完剩余公共牌。
+- 摊牌时从 7 张牌中选最好的 5 张比较，牌型从小到大：`high_card`、`pair`、`two_pair`、`three_of_a_kind`、`straight`（含 A-2-3-4-5）、`flush`、`full_house`、`four_of_a_kind`、`straight_flush`。平局平分底池，除不尽的筹码从庄位左边开始依次给赢家。
+- 超时自动动作：能过牌就过牌，否则弃牌。超时规则（托管）与斗地主相同。
+- 计分：`scores` 是每个座位本手的净输赢筹码，所有参与者之和为 0。排行榜 `GET /leaderboard?game=holdem` 的 `score` 是累计筹码，`wins` 是赢到筹码的手数。
+
+### 9.2 接口
+
+| 方法 | 路径 | 请求 | 响应 |
+|---|---|---|---|
+| POST | `/games/{gid}/action` | `{"action":"fold|check|call|raise", "amount"?: 本轮下注总额, "seq"?}` | `{"ok":true,"seq"}` |
+| GET | `/games/{gid}/legal-moves` | — | `{"actions":{"fold","check","call":需补的筹码或null,"raise":{"min","max"}或null}}`，没轮到你时 `actions` 为 `null` |
+
+WebSocket 同样可以发 `{"op":"action","req_id":"1","game_id":"g_x","action":"call","seq":42}`。
+
+错误码：`BAD_ACTION`（400，未知动作，或没有可跟的注时 `call`、不允许加注时 `raise`）、`CANNOT_CHECK`（422，面对下注时过牌）、`BAD_AMOUNT`（422，加注额不在 `min_raise_to`..`max_raise_to` 之间或不是整数）。其余（`NOT_YOUR_TURN`、`STALE_SEQ`、`WRONG_PHASE` 等）与斗地主相同。
+
+### 9.3 视图
+
+座位相关的数组（`stacks`、`bets`、`committed`、`folded`、`all_in`、`scores`、`payouts`、`holes`）长度等于房间座位数，按座位号索引，没有参加这手牌的座位为 `null`。
+
+`PublicGame` 的德州扑克字段：
+
+```json
+{
+  "game": "holdem", "phase": "preflop | flop | turn | river | finished",
+  "players": [{"seat":0,"bot_id":"b_x","name":"alpha","kind":"bot"}, {"seat":2,...}],
+  "turn": 2, "deadline": 1794760218271, "remaining_ms": 14200,
+  "button": 0, "small_blind_seat": 2, "big_blind_seat": 4, "small_blind": 1, "big_blind": 2,
+  "board": ["AS","KD","7C"], "pot": 12, "current_bet": 4, "min_raise_to": 8,
+  "stacks": [196, null, 194, null, 198, null], "bets": [0, null, 4, null, 0, null],
+  "committed": [4, null, 6, null, 2, null], "folded": [false, null, false, null, false, null],
+  "all_in": [false, null, false, null, false, null],
+  "history": [{"seat":2,"phase":"preflop","action":"small_blind","amount":1,"all_in":false}, ...],
+  "result": null, "seq": 120, "turn_seq": 118
+}
+```
+
+`history[].amount`：`raise` 是本轮下注总额，`call` 和盲注是补进的筹码，`fold`、`check` 为 0。
+
+`PlayerGame`（`GET /games/{gid}/state`）在此基础上增加 `seat`、`hole`（你的 2 张底牌），轮到你时还有 `legal`（字段同下面的 `turn` 事件）。
+
+`result`：
+
+```json
+{"winners":[2], "scores":[-6, null, 12, null, -6, null], "payouts":[0, null, 18, null, 0, null], "pot":18,
+ "showdown":[{"seat":0,"hole":["9H","9D"],"best":["9H","9D","AS","KD","7C"],"rank":"pair","score":1234567}, ...]}
+```
+
+`showdown` 列出摊牌的玩家，按座位排序；靠弃牌赢下时为 `null`。`score` 越大牌越大，相等即平局。
+
+`Replay` 额外包含 `seed` 和 `holes`（每个座位的底牌，包括弃牌者）。
+
+### 9.4 事件
+
+| `type` | 说明 | `data` |
+|---|---|---|
+| `game.started` | 新的一手 | `game`、`players`、`button`、`small_blind_seat`、`big_blind_seat`、`small_blind`、`big_blind`、`stacks`、`bets`、`pot`；玩家自己还会收到 `hole` |
+| `turn` | 轮到某人行动 | `seat`、`deadline`、`remaining_ms`、`phase`、`to_call`（需补的筹码，0 表示可以过牌）、`can_check`、`min_raise_to`、`max_raise_to`（不能加注时两者为 `null`）、`current_bet`、`pot` |
+| `acted` | 有人行动了（含盲注之外的所有动作） | `seat`、`phase`、`action`、`amount`、`all_in`、`auto`（是否超时代打）、`stack`、`bet`、`pot` |
+| `board` | 发公共牌 | `phase`（`flop`/`turn`/`river`）、`cards`（新发的牌）、`board`（目前所有公共牌）。所有人全下时会连续收到多条 |
+| `game.finished` | 一手结束 | `result`、`seed` |
+
+`room.updated`、`hello`、`resync`、`pong` 与斗地主相同。
+
+### 9.5 bot 主循环
+
+```
+收到 turn 且 data.seat == 我的座位:
+    看 data.to_call、data.min_raise_to、data.max_raise_to，以及自己的 hole 和公共牌
+    决定 fold / check / call / raise(amount)
+    POST /games/{gid}/action {"action":..., "amount":..., "seq": data 所在事件的 seq}
+```
+
+规则引擎在 [`packages/engine/src/holdem/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/holdem)，其中 `evaluateHoldem` 是 7 选 5 的牌力评估，可以作为移植参考。

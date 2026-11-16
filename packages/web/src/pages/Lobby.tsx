@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { type GameSummary, type LeaderboardRow, type Room, api, errorText } from '../api.ts';
+import {
+  type GameResult,
+  type GameSummary,
+  type GameType,
+  type HoldemResult,
+  type LeaderboardRow,
+  type Room,
+  type RoomConfig,
+  GAME_LABELS,
+  GAME_TYPES,
+  api,
+  errorText,
+  gameTypeOf,
+} from '../api.ts';
 import { GuestForm } from '../components/Guest.tsx';
 import { toast } from '../components/Toast.tsx';
 import { useGuest } from '../guest.ts';
@@ -59,7 +72,7 @@ export function Lobby({ tab }: { tab: string | null }) {
           </aside>
         </div>
       )}
-      {active === 'games' && <Games limit={50} />}
+      {active === 'games' && <Games limit={50} filterable />}
       {active === 'leaderboard' && <Leaderboard />}
     </div>
   );
@@ -70,12 +83,37 @@ function Rooms() {
   const guest = useGuest();
   const [creating, setCreating] = useState(false);
   const [roomName, setRoomName] = useState('');
+  const [game, setGame] = useState<GameType>('ddz');
+  const [seats, setSeats] = useState(6);
+  const [noLegal, setNoLegal] = useState(false);
+  // Timeouts in seconds; empty = server default.
+  const [bidSec, setBidSec] = useState('');
+  const [playSec, setPlaySec] = useState('');
+  const [actionSec, setActionSec] = useState('');
 
   const create = async () => {
     if (!guest) return;
+    const config: Partial<RoomConfig> = {};
+    if (game === 'holdem') config.seats = seats;
+    if (noLegal) config.legal_moves_api = false;
+    const sec = (v: string, label: string): number | undefined => {
+      if (!v.trim()) return undefined;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 1 || n > 120) throw new Error(`${label}必须是 1–120 秒`);
+      return Math.round(n * 1000);
+    };
     setCreating(true);
     try {
-      const room = await api.createRoom(guest.token, roomName.trim() || undefined);
+      if (game === 'holdem') {
+        const a = sec(actionSec, '行动时限');
+        if (a !== undefined) config.action_timeout_ms = a;
+      } else {
+        const b = sec(bidSec, '叫分时限');
+        const p = sec(playSec, '出牌时限');
+        if (b !== undefined) config.bid_timeout_ms = b;
+        if (p !== undefined) config.play_timeout_ms = p;
+      }
+      const room = await api.createRoom(guest.token, { name: roomName.trim() || undefined, game, config });
       reload();
       navigate(href.room(room.id));
     } catch (e) {
@@ -91,11 +129,54 @@ function Rooms() {
       <div className="section-head">
         <h2>房间 {data && <span className="muted">({rooms.length})</span>}</h2>
         {guest ? (
-          <div className="create-room">
-            <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="房间名（可选）" maxLength={24} aria-label="房间名" />
-            <button className="btn btn-primary" onClick={create} disabled={creating}>
-              新建房间
-            </button>
+          <div className="create-room-box">
+            <div className="create-room">
+              <select value={game} onChange={(e) => setGame(e.target.value as GameType)} aria-label="游戏类型">
+                {GAME_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {GAME_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              {game === 'holdem' && (
+                <select value={seats} onChange={(e) => setSeats(Number(e.target.value))} aria-label="座位数">
+                  {[2, 3, 4, 5, 6].map((n) => (
+                    <option key={n} value={n}>
+                      {n} 人桌
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="房间名（可选）" maxLength={24} aria-label="房间名" />
+              <button className="btn btn-primary" onClick={create} disabled={creating}>
+                新建房间
+              </button>
+            </div>
+            <details className="create-advanced">
+              <summary>高级选项</summary>
+              <div className="create-advanced-body">
+                <label className="toggle">
+                  <input type="checkbox" checked={noLegal} onChange={(e) => setNoLegal(e.target.checked)} /> 关闭 legal-moves 接口
+                </label>
+                {game === 'holdem' ? (
+                  <label>
+                    行动时限
+                    <input type="number" min={1} max={120} value={actionSec} onChange={(e) => setActionSec(e.target.value)} placeholder="15" /> 秒
+                  </label>
+                ) : (
+                  <>
+                    <label>
+                      叫分时限
+                      <input type="number" min={1} max={120} value={bidSec} onChange={(e) => setBidSec(e.target.value)} placeholder="10" /> 秒
+                    </label>
+                    <label>
+                      出牌时限
+                      <input type="number" min={1} max={120} value={playSec} onChange={(e) => setPlaySec(e.target.value)} placeholder="20" /> 秒
+                    </label>
+                  </>
+                )}
+              </div>
+            </details>
           </div>
         ) : (
           <details className="create-room-help">
@@ -117,6 +198,11 @@ function Rooms() {
   );
 }
 
+function GameBadge({ game }: { game: unknown }) {
+  const t = gameTypeOf(game);
+  return <span className={`badge game-badge game-${t}`}>{GAME_LABELS[t]}</span>;
+}
+
 function RoomCard({ room }: { room: Room }) {
   return (
     <div className="room-card">
@@ -124,11 +210,11 @@ function RoomCard({ room }: { room: Room }) {
         <a className="room-name" href={href.room(room.id)}>
           {room.name}
         </a>
+        <GameBadge game={room.game} />
         <span className={`status status-${room.status}`}>{room.status === 'playing' ? '对局中' : room.status === 'waiting' ? '等待中' : room.status}</span>
       </div>
       <ul className="room-seats">
-        {[0, 1, 2].map((i) => {
-          const s = room.seats[i];
+        {room.seats.map((s, i) => {
           return (
             <li key={i} className={s ? '' : 'muted'}>
               <span className="seat-no">{i}</span>
@@ -162,8 +248,29 @@ function RoomCard({ room }: { room: Room }) {
   );
 }
 
-function Games({ limit }: { limit: number }) {
-  const { data, error } = usePoll(() => api.games(limit), 10000);
+function Games({ limit, filterable }: { limit: number; filterable?: boolean }) {
+  const [game, setGame] = useState<GameType | ''>('');
+  return (
+    <>
+      {filterable && (
+        <div className="sort-bar">
+          <select value={game} onChange={(e) => setGame(e.target.value as GameType | '')} aria-label="游戏类型">
+            <option value="">全部游戏</option>
+            {GAME_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {GAME_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <GameList key={game} limit={limit} game={game || undefined} />
+    </>
+  );
+}
+
+function GameList({ limit, game }: { limit: number; game?: GameType }) {
+  const { data, error } = usePoll(() => api.games(limit, undefined, game), 10000);
   const games = data?.games ?? [];
   if (error) return <div className="error-box">加载失败：{error}</div>;
   if (!data) return <div className="muted">加载中…</div>;
@@ -178,26 +285,33 @@ function Games({ limit }: { limit: number }) {
 }
 
 function GameRow({ g }: { g: GameSummary }) {
-  const r = g.result;
+  const type = gameTypeOf(g.game);
+  const holdem = type === 'holdem';
+  const dr = !holdem ? ((g.result ?? null) as GameResult | null) : null;
+  const hr = holdem ? ((g.result ?? null) as HoldemResult | null) : null;
   const time = fmtTime(g.finished_at ?? g.ended_at ?? g.started_at ?? g.created_at);
   const names = (g.players ?? []).map((p, i) => {
     const seat = typeof p.seat === 'number' ? p.seat : i;
-    const sc = r?.scores?.[seat];
+    const sc = g.result?.scores?.[seat];
+    const landlord = !holdem && (g.landlord === seat || dr?.landlord === seat);
+    const winner = !!hr?.winners?.includes(seat);
     return (
-      <span key={seat} className={`gp${g.landlord === seat || r?.landlord === seat ? ' gp-landlord' : ''}`}>
+      <span key={seat} className={`gp${landlord ? ' gp-landlord' : ''}${winner ? ' gp-winner' : ''}`}>
         {p.name}
-        {sc !== undefined && <span className={`score ${sc > 0 ? 'pos' : sc < 0 ? 'neg' : ''}`}>{sc > 0 ? `+${sc}` : sc}</span>}
+        {sc !== undefined && sc !== null && <span className={`score ${sc > 0 ? 'pos' : sc < 0 ? 'neg' : ''}`}>{sc > 0 ? `+${sc}` : sc}</span>}
       </span>
     );
   });
   return (
     <li className="game-row">
-      <a href={href.replay(g.game_id)}>
+      <a href={href.replay(g.game_id)} title="查看回放">
         <div className="game-row-top">
+          <GameBadge game={g.game} />
           <span className="game-id">{g.game_id}</span>
-          {r && <span className="badge">{r.kind === 'nobid' ? '流局' : r.winner === 'landlord' ? '地主胜' : '农民胜'}</span>}
-          {r?.spring && <span className="badge badge-warn">春天</span>}
-          {r?.anti_spring && <span className="badge badge-warn">反春</span>}
+          {dr && <span className="badge">{dr.kind === 'nobid' ? '流局' : dr.winner === 'landlord' ? '地主胜' : '农民胜'}</span>}
+          {dr?.spring && <span className="badge badge-warn">春天</span>}
+          {dr?.anti_spring && <span className="badge badge-warn">反春</span>}
+          {hr && <span className="badge">底池 {hr.pot}{hr.showdown ? ' · 摊牌' : ''}</span>}
           {time && <span className="muted game-time">{time}</span>}
         </div>
         {names.length > 0 && <div className="game-players">{names}</div>}
@@ -207,20 +321,41 @@ function GameRow({ g }: { g: GameSummary }) {
 }
 
 function Leaderboard() {
-  const { data, error } = usePoll(() => api.leaderboard(), 15000);
+  const [game, setGame] = useState<GameType>('ddz');
+  return <LeaderboardTable key={game} game={game} setGame={setGame} />;
+}
+
+function LeaderboardTable({ game, setGame }: { game: GameType; setGame: (g: GameType) => void }) {
+  const { data, error } = usePoll(() => api.leaderboard(game), 15000);
   const [sort, setSort] = useState<'score' | 'winrate' | 'games'>('score');
-  if (error) return <div className="error-box">加载失败：{error}</div>;
+  const holdem = game === 'holdem';
+  const picker = (
+    <select value={game} onChange={(e) => setGame(e.target.value as GameType)} aria-label="游戏类型">
+      {GAME_TYPES.map((t) => (
+        <option key={t} value={t}>
+          {GAME_LABELS[t]}
+        </option>
+      ))}
+    </select>
+  );
+  if (error)
+    return (
+      <div className="leaderboard">
+        <div className="sort-bar">{picker}</div>
+        <div className="error-box">加载失败：{error}</div>
+      </div>
+    );
   if (!data) return <div className="muted">加载中…</div>;
   const rows: LeaderboardRow[] = [...data.bots].sort((a, b) => {
     if (sort === 'games') return b.games - a.games;
     if (sort === 'winrate') return (b.games ? b.wins / b.games : 0) - (a.games ? a.wins / a.games : 0);
     return b.score - a.score;
   });
-  if (rows.length === 0) return <div className="empty">暂无数据</div>;
   return (
     <div className="leaderboard">
       <div className="sort-bar">
-        排序：
+        {picker}
+        <span className="sort-label">排序：</span>
         {(
           [
             ['score', '总分'],
@@ -233,17 +368,20 @@ function Leaderboard() {
           </button>
         ))}
       </div>
+      {rows.length === 0 ? (
+        <div className="empty">暂无数据</div>
+      ) : (
       <div className="table-scroll">
         <table className="lb-table">
           <thead>
             <tr>
               <th>#</th>
               <th>名称</th>
-              <th>局数</th>
+              <th>{holdem ? '手数' : '局数'}</th>
               <th>胜率</th>
-              <th>地主胜率</th>
-              <th>总分</th>
-              <th>场均</th>
+              {!holdem && <th>地主胜率</th>}
+              <th>{holdem ? '累计筹码' : '总分'}</th>
+              <th>{holdem ? '每手' : '场均'}</th>
               <th>超时次数</th>
             </tr>
           </thead>
@@ -257,9 +395,11 @@ function Leaderboard() {
                 </td>
                 <td>{b.games}</td>
                 <td>{pct(b.wins, b.games)}</td>
-                <td>
-                  {pct(b.landlord_wins, b.landlord_games)} <span className="muted">({b.landlord_games})</span>
-                </td>
+                {!holdem && (
+                  <td>
+                    {pct(b.landlord_wins, b.landlord_games)} <span className="muted">({b.landlord_games})</span>
+                  </td>
+                )}
                 <td className={b.score > 0 ? 'pos' : b.score < 0 ? 'neg' : ''}>{b.score}</td>
                 <td>{b.games ? (b.score / b.games).toFixed(2) : '-'}</td>
                 <td>{b.timeouts}</td>
@@ -268,6 +408,8 @@ function Leaderboard() {
           </tbody>
         </table>
       </div>
+      )}
+      {holdem && <p className="muted lb-note">德州扑克：胜率按赢到筹码的手数计算，累计筹码是每手净输赢之和。</p>}
     </div>
   );
 }

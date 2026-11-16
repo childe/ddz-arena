@@ -1,22 +1,38 @@
-// Endless demo table: three bots play in one room named "三机演示" forever, pausing before each
-// action so humans can follow along in the web UI. Runs next to the server (deploy/ddz-demo.service).
+// Endless demo tables: one room per game type ("三机演示" for 3-player Dou Dizhu, "四人斗地主演示",
+// "德州扑克演示") where bots play forever, pausing before each action so humans can follow along in
+// the web UI. Runs next to the server (deploy/ddz-demo.service).
 //
 //   DDZ_DEMO_BASE=http://127.0.0.1:8080 DDZ_INVITE_CODE=... node deploy/demo.mjs   (defaults to 127.0.0.1:$PORT)
 //
-// Tokens are kept in DDZ_DEMO_STATE (default data/demo.json) so the same three bots are reused.
-// A supervisor loop recreates the room after a server restart (rooms live in memory).
+// Tokens and room ids are kept in DDZ_DEMO_STATE (default data/demo.json) so the same bots are reused.
+// A supervisor loop recreates rooms after a server restart (rooms live in memory).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { evaluateHoldem } from '@ddz/engine';
 
 const BASE = (process.env.DDZ_DEMO_BASE ?? `http://127.0.0.1:${process.env.PORT ?? 8080}`).replace(/\/$/, '');
 const INVITE = process.env.DDZ_INVITE_CODE;
 const PAUSE_MS = Number(process.env.DDZ_DEMO_PAUSE_MS ?? 1500);
 const STATE = process.env.DDZ_DEMO_STATE ?? 'data/demo.json';
-const ROOM_NAME = '三机演示';
-const BOTS = [
-  { name: '演示-贪心A', style: 'greedy' },
-  { name: '演示-贪心B', style: 'greedy' },
-  { name: '演示-随机C', style: 'random' },
+const TABLES = [
+  {
+    key: 'ddz', game: 'ddz', room: '三机演示',
+    bots: [{ name: '演示-贪心A', style: 'greedy' }, { name: '演示-贪心B', style: 'greedy' }, { name: '演示-随机C', style: 'random' }],
+  },
+  {
+    key: 'ddz4', game: 'ddz4', room: '四人斗地主演示',
+    bots: [
+      { name: '四人-贪心A', style: 'greedy' }, { name: '四人-贪心B', style: 'greedy' },
+      { name: '四人-贪心C', style: 'greedy' }, { name: '四人-随机D', style: 'random' },
+    ],
+  },
+  {
+    key: 'holdem', game: 'holdem', room: '德州扑克演示', config: { seats: 6 },
+    bots: [
+      { name: '德州-紧凶A', style: 'tight' }, { name: '德州-紧凶B', style: 'tight' },
+      { name: '德州-松浪C', style: 'loose' }, { name: '德州-随机D', style: 'random' },
+    ],
+  },
 ];
 const RANKS = '3456789TJQKA2'.split('').concat(['BJ', 'RJ']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,9 +65,12 @@ async function api(method, path, token, body) {
 
 function loadState() {
   try {
-    return JSON.parse(readFileSync(STATE, 'utf8'));
+    const s = JSON.parse(readFileSync(STATE, 'utf8'));
+    s.rooms ??= s.room ? { ddz: s.room } : {}; // older single-table state file
+    delete s.room;
+    return s;
   } catch {
-    return { bots: {}, room: null };
+    return { bots: {}, rooms: {} };
   }
 }
 const state = loadState();
@@ -76,7 +95,7 @@ async function register(spec) {
   }
 }
 
-// ---------- strategy ----------
+// ---------- Dou Dizhu strategy ----------
 
 const rankOf = (c) => (c === 'BJ' || c === 'RJ' ? c : c[0]);
 
@@ -86,8 +105,10 @@ function bidFor(style, hand, highBid) {
   else {
     const counts = {};
     for (const c of hand) counts[rankOf(c)] = (counts[rankOf(c)] ?? 0) + 1;
-    const bombs = Object.values(counts).filter((n) => n === 4).length;
-    const s = (counts['2'] ?? 0) + (counts.BJ ? 1.5 : 0) + (counts.RJ ? 2 : 0) + bombs * 2 + (counts.A ?? 0) * 0.5;
+    const bombs = Object.entries(counts).filter(([r, n]) => n >= 4 && r !== 'BJ' && r !== 'RJ').length;
+    // Normalize for 4-player hands (25 cards, two decks) so the bid rate stays similar.
+    const scale = hand.length > 20 ? 0.6 : 1;
+    const s = scale * ((counts['2'] ?? 0) + (counts.BJ ?? 0) * 1.5 + (counts.RJ ?? 0) * 2 + (counts.A ?? 0) * 0.5) + bombs * 2;
     want = s >= 6 ? 3 : s >= 4.5 ? 2 : s >= 3 ? 1 : 0;
   }
   return want > highBid ? want : 0;
@@ -112,11 +133,54 @@ function chooseMove(style, st, moves) {
   return moves[0].cards;
 }
 
+// ---------- Hold'em strategy ----------
+
+const HOLDEM_RANKS = '23456789TJQKA';
+
+/** Rough preflop strength 0..1 from the two hole cards. */
+function preflopStrength([a, b]) {
+  const ra = HOLDEM_RANKS.indexOf(a[0]);
+  const rb = HOLDEM_RANKS.indexOf(b[0]);
+  const hi = Math.max(ra, rb);
+  const lo = Math.min(ra, rb);
+  let s = (hi + lo) / 24;
+  if (ra === rb) s = 0.55 + ra / 27;
+  if (a[1] === b[1]) s += 0.06;
+  if (hi - lo === 1) s += 0.04;
+  return Math.min(1, s);
+}
+
+const CATEGORY = ['high_card', 'pair', 'two_pair', 'three_of_a_kind', 'straight', 'flush', 'full_house', 'four_of_a_kind', 'straight_flush'];
+
+function holdemAction(style, st) {
+  const l = st.legal;
+  const passive = () => (l.can_check ? { action: 'check' } : { action: 'fold' });
+  const raiseTo = (target) => {
+    if (l.min_raise_to === null) return { action: l.to_call > 0 ? 'call' : 'check' };
+    return { action: 'raise', amount: Math.max(l.min_raise_to, Math.min(l.max_raise_to, Math.round(target))) };
+  };
+  if (style === 'random') {
+    const r = Math.random();
+    if (r < 0.15 && l.min_raise_to !== null) return raiseTo(l.min_raise_to + Math.random() * (l.max_raise_to - l.min_raise_to) * 0.3);
+    if (r < 0.75) return l.to_call > 0 ? { action: 'call' } : { action: 'check' };
+    return passive();
+  }
+  const loose = style === 'loose';
+  let strength;
+  if (st.board.length === 0) strength = preflopStrength(st.hole);
+  else strength = (CATEGORY.indexOf(evaluateHoldem([...st.hole, ...st.board]).rank) + 1) / 5; // pair ≈ 0.4, two pair ≈ 0.6
+  const potOdds = l.to_call / Math.max(1, st.pot + l.to_call);
+  if (strength >= (loose ? 0.6 : 0.7)) return raiseTo((l.current_bet || st.big_blind) + st.pot * (loose ? 1 : 0.75));
+  if (strength >= (loose ? 0.35 : 0.45) && potOdds <= (loose ? 0.4 : 0.3)) return l.to_call > 0 ? { action: 'call' } : { action: 'check' };
+  if (loose && l.to_call === 0 && Math.random() < 0.2) return raiseTo(st.pot * 0.5 + st.big_blind);
+  return passive();
+}
+
 // ---------- bots ----------
 
 class DemoBot {
-  constructor(spec, token) {
-    Object.assign(this, spec, { token, seat: null, lastSeq: 0, acting: false });
+  constructor(spec, token, table) {
+    Object.assign(this, spec, { token, table, seat: null, lastSeq: 0, acting: false });
   }
 
   connect(delay = 500) {
@@ -139,9 +203,10 @@ class DemoBot {
       this.lastSeq = ev.seq;
     }
     if ((ev.type === 'bid.turn' || ev.type === 'turn') && ev.data.seat === this.seat) this.act(ev);
-    if (ev.type === 'game.finished' && this.seat === 0) {
+    if (ev.type === 'game.finished' && this === this.table.bots[0]) {
       const r = ev.data.result;
-      log(`game ${ev.game_id}: ${r.kind} winner=${r.winner ?? '-'} scores=${r.scores.join(',')}`);
+      const scores = Array.isArray(r.scores) ? r.scores.map((x) => x ?? '-').join(',') : '';
+      log(`${this.table.key} ${ev.game_id}: ${r.kind ?? r.showdown?.[0]?.rank ?? 'fold'} scores=${scores}`);
     }
   }
 
@@ -168,25 +233,30 @@ class DemoBot {
   async takeTurn(gid) {
     const st = (await api('GET', `/games/${gid}/state`, this.token)).data;
     if (!st || st.turn !== this.seat) return;
-    if (st.phase === 'bidding') {
-      await api('POST', `/games/${gid}/bid`, this.token, { score: bidFor(this.style, st.hand, st.high_bid), seq: st.seq });
-      return;
+    let r;
+    if (st.game === 'holdem') {
+      if (!st.legal) return;
+      r = await api('POST', `/games/${gid}/action`, this.token, { ...holdemAction(this.style, st), seq: st.seq });
+    } else if (st.phase === 'bidding') {
+      r = await api('POST', `/games/${gid}/bid`, this.token, { score: bidFor(this.style, st.hand, st.high_bid), seq: st.seq });
+    } else if (st.phase === 'playing') {
+      const moves = (await api('GET', `/games/${gid}/legal-moves`, this.token)).data.moves ?? [];
+      r = await api('POST', `/games/${gid}/play`, this.token, { cards: chooseMove(this.style, st, moves), seq: st.seq });
     }
-    if (st.phase !== 'playing') return;
-    const moves = (await api('GET', `/games/${gid}/legal-moves`, this.token)).data.moves ?? [];
-    const r = await api('POST', `/games/${gid}/play`, this.token, { cards: chooseMove(this.style, st, moves), seq: st.seq });
-    if (r.status >= 400) log(this.name, 'play rejected', r.status, JSON.stringify(r.data));
+    if (r && r.status >= 400) log(this.name, 'rejected', r.status, JSON.stringify(r.data));
   }
 }
 
 // ---------- room supervisor ----------
 
-async function ensureRoom(bots) {
-  if (state.room) {
-    const r = await api('GET', `/rooms/${state.room}`);
+async function ensureRoom(table) {
+  const { bots } = table;
+  const rid = state.rooms[table.key];
+  if (rid) {
+    const r = await api('GET', `/rooms/${rid}`);
     if (r.status === 0) return; // server down; try again later
     const room = r.data?.room;
-    if (r.status === 200 && bots.every((b, i) => room.seats[i]?.bot_id === b.id)) {
+    if (r.status === 200 && room.game === table.game && bots.every((b, i) => room.seats[i]?.bot_id === b.id)) {
       bots.forEach((b, i) => (b.seat = i));
       // Watchdog: pick up a turn whose event was missed (e.g. it arrived before seats were known).
       if (room.status === 'playing' && room.game_id) for (const b of bots) b.act({ game_id: room.game_id });
@@ -196,37 +266,42 @@ async function ensureRoom(bots) {
       return;
     }
   }
-  const created = await api('POST', '/rooms', bots[0].token, { name: ROOM_NAME });
+  const created = await api('POST', '/rooms', bots[0].token, { name: table.room, game: table.game, config: table.config });
   if (created.status !== 201) throw new Error(`create room: ${JSON.stringify(created.data)}`);
-  const rid = created.data.id;
+  const newId = created.data.id;
   for (const [i, b] of bots.entries()) {
     const cur = (await api('GET', '/me', b.token)).data;
-    if (cur.room_id && cur.room_id !== rid) await api('POST', `/rooms/${cur.room_id}/leave`, b.token, {});
-    const j = await api('POST', `/rooms/${rid}/join`, b.token, { seat: i });
+    if (cur.room_id && cur.room_id !== newId) await api('POST', `/rooms/${cur.room_id}/leave`, b.token, {});
+    const j = await api('POST', `/rooms/${newId}/join`, b.token, { seat: i });
     if (j.status !== 200) throw new Error(`join: ${JSON.stringify(j.data)}`);
     b.seat = i;
   }
-  for (const b of bots) await api('POST', `/rooms/${rid}/ready`, b.token, { ready: true });
-  state.room = rid;
+  for (const b of bots) await api('POST', `/rooms/${newId}/ready`, b.token, { ready: true });
+  state.rooms[table.key] = newId;
   saveState();
-  log(`room ${rid} ready: ${BASE}/#/room/${rid}`);
+  log(`${table.key} room ${newId} ready: ${BASE}/#/room/${newId}`);
 }
 
-const bots = [];
-for (const spec of BOTS) {
-  const bot = new DemoBot(spec, await register(spec));
-  const me = await api('GET', '/me', bot.token);
-  if (me.status !== 200) throw new Error(`me: ${JSON.stringify(me.data)}`);
-  bot.id = me.data.bot_id;
-  bots.push(bot);
+for (const table of TABLES) {
+  const bots = [];
+  for (const spec of table.bots) {
+    const bot = new DemoBot(spec, await register(spec), table);
+    const me = await api('GET', '/me', bot.token);
+    if (me.status !== 200) throw new Error(`me: ${JSON.stringify(me.data)}`);
+    bot.id = me.data.bot_id;
+    bots.push(bot);
+  }
+  table.bots = bots;
+  for (const b of bots) b.connect();
 }
-for (const b of bots) b.connect();
 await sleep(1000); // let sockets open before seating, so the first events aren't missed
 for (;;) {
-  try {
-    await ensureRoom(bots);
-  } catch (e) {
-    log('supervisor:', e.message);
+  for (const table of TABLES) {
+    try {
+      await ensureRoom(table);
+    } catch (e) {
+      log(`supervisor ${table.key}:`, e.message);
+    }
   }
   await sleep(20_000);
 }

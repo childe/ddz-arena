@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { type Move, RANK_LABELS, identify, legalMoves, preferred } from '@ddz/engine';
-import { type Card, type Room, type WsEvent, ApiError, api, errorText } from '../api.ts';
-import { patternName } from '../components/Card.tsx';
+import {
+  type Move,
+  type Move4,
+  type Pattern4,
+  RANK_LABELS,
+  identify,
+  identify4,
+  legalMoves,
+  legalMoves4,
+  preferred,
+  preferred4,
+} from '@ddz/engine';
+import { type Card, type HoldemAction, type Room, type WsEvent, ApiError, GAME_LABELS, api, errorText } from '../api.ts';
+import { cardKeys, cardsByKeys, keysForCards, patternName } from '../components/Card.tsx';
 import { GuestForm } from '../components/Guest.tsx';
 import { History } from '../components/History.tsx';
-import { Table } from '../components/Table.tsx';
+import { HoldemControls, HoldemHistory, HoldemTable, holdemSeats } from '../components/HoldemTable.tsx';
+import { Table, tableSeats } from '../components/Table.tsx';
 import { toast } from '../components/Toast.tsx';
 import { useGuest } from '../guest.ts';
 import { href } from '../router.ts';
-import { type TableState, applyEvent, emptyTable, tableFromSnapshot } from '../state.ts';
+import { type OwnView, type TableState, applyEvent, emptyTable, tableFromSnapshot } from '../state.ts';
 import { LiveSocket, type SocketStatus } from '../ws.ts';
 
 type Action =
@@ -34,8 +46,10 @@ function reducer(s: TableState, a: Action): TableState {
   }
 }
 
-function sortMoves(moves: Move[]): Move[] {
-  const isBomb = (m: Move) => m.pattern.type === 'bomb' || m.pattern.type === 'rocket';
+type AnyMove = Move | Move4;
+
+function sortMoves(moves: AnyMove[]): AnyMove[] {
+  const isBomb = (m: AnyMove) => m.pattern.type === 'bomb' || m.pattern.type === 'rocket';
   return [...moves].sort(
     (a, b) => Number(isBomb(a)) - Number(isBomb(b)) || a.pattern.main - b.pattern.main || a.cards.length - b.cards.length,
   );
@@ -50,7 +64,8 @@ export function RoomPage({ rid }: { rid: string }) {
   const [loadError, setLoadError] = useState('');
   const [sockStatus, setSockStatus] = useState<SocketStatus>('connecting');
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<Set<Card>>(new Set());
+  /** Selected cards of own hand, as occurrence keys (ddz4 hands contain duplicate codes). */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const hintIdx = useRef(0);
 
   useEffect(() => {
@@ -70,13 +85,15 @@ export function RoomPage({ rid }: { rid: string }) {
     try {
       const { room, game } = await api.room(rid);
       let g = game;
-      let own: { seat: number; hand: Card[] } | undefined;
+      let own: OwnView | undefined;
       const me = guest ? room.seats.findIndex((s) => s?.bot_id === guest.bot_id) : -1;
       if (guest && game && me >= 0) {
         try {
           const pg = await api.gameState(guest.token, game.game_id);
           g = pg;
-          if (Array.isArray(pg.hand)) own = { seat: pg.seat ?? me, hand: pg.hand };
+          const seat = pg.seat ?? me;
+          if ('hand' in pg && Array.isArray(pg.hand)) own = { seat, hand: pg.hand };
+          else if ('hole' in pg && Array.isArray(pg.hole)) own = { seat, hole: pg.hole, legal: pg.legal };
         } catch {
           /* not a player of this game (e.g. joined after it started) */
         }
@@ -126,7 +143,10 @@ export function RoomPage({ rid }: { rid: string }) {
     };
   }, [rid, playerMode, token, refresh]);
 
+  const isHoldem = state.gameType === 'holdem';
+  const isDdz4 = state.gameType === 'ddz4';
   const g = state.game;
+  const hg = state.holdem;
   const room = state.room;
   const myHand = mySeat !== null ? (g?.hands[mySeat] ?? null) : null;
   const myTurn = !!g && mySeat !== null && g.turn === mySeat && g.phase !== 'finished';
@@ -135,8 +155,8 @@ export function RoomPage({ rid }: { rid: string }) {
   // Drop selected cards that left the hand; reset hint cycle on every new turn.
   useEffect(() => {
     setSelected((sel) => {
-      const hand = new Set(myHand ?? []);
-      const next = new Set([...sel].filter((c) => hand.has(c)));
+      const keys = new Set(cardKeys(myHand ?? []));
+      const next = new Set([...sel].filter((k) => keys.has(k)));
       return next.size === sel.size ? sel : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,6 +164,10 @@ export function RoomPage({ rid }: { rid: string }) {
   useEffect(() => {
     hintIdx.current = 0;
   }, [g?.turn_seq, g?.game_id]);
+  // A new deal or a finished game clears the selection.
+  useEffect(() => {
+    setSelected((sel) => (sel.size ? new Set() : sel));
+  }, [g?.game_id, g?.phase === 'finished']);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -162,7 +186,10 @@ export function RoomPage({ rid }: { rid: string }) {
       dispatch({ t: 'room', room: r.room });
     });
   const leave = () => {
-    if (g && g.phase !== 'finished' && !confirm('对局中离开，你的座位会托管到本局结束。确定离开？')) return;
+    const inGame = isHoldem
+      ? !!hg && hg.phase !== 'finished' && mySeat !== null && hg.stacks[mySeat] !== null && hg.stacks[mySeat] !== undefined
+      : !!g && g.phase !== 'finished';
+    if (inGame && !confirm('对局中离开，你的座位会托管到本局结束。确定离开？')) return;
     return run(async () => {
       await api.leave(token!, rid);
       await refresh();
@@ -180,18 +207,21 @@ export function RoomPage({ rid }: { rid: string }) {
       await api.play(token!, g!.game_id, cards, seqArg());
       setSelected(new Set());
     });
+  const act = (action: HoldemAction, amount?: number) => run(() => api.action(token!, hg!.game_id, action, amount, seqArg()));
 
   const toBeatEngine = useMemo(() => {
     const p = g?.to_beat?.pattern;
     if (!p) return null;
     const main = RANK_LABELS.indexOf(p.rank);
-    return main >= 0 ? { type: p.type as Move['pattern']['type'], main, length: p.length } : null;
+    return main >= 0 ? { type: p.type, main, length: p.length } : null;
   }, [g?.to_beat]);
 
   const hint = () => {
     if (!myHand) return;
     const lead = g?.can_pass ? toBeatEngine : null;
-    const moves = sortMoves(legalMoves(myHand, lead));
+    const moves = sortMoves(
+      isDdz4 ? legalMoves4(myHand, lead as Pattern4 | null) : legalMoves(myHand, lead as Move['pattern'] | null),
+    );
     if (moves.length === 0) {
       toast('没有能压过上家的牌', 'info');
       setSelected(new Set());
@@ -199,25 +229,25 @@ export function RoomPage({ rid }: { rid: string }) {
     }
     const m = moves[hintIdx.current % moves.length]!;
     hintIdx.current++;
-    setSelected(new Set(m.cards));
+    setSelected(keysForCards(myHand, m.cards));
   };
 
-  const toggle = (c: Card) => {
+  const toggle = (k: string) => {
     setSelected((sel) => {
       const next = new Set(sel);
-      if (next.has(c)) next.delete(c);
-      else next.add(c);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
       return next;
     });
   };
 
-  const selectedCards = myHand ? myHand.filter((c) => selected.has(c)) : [];
+  const selectedCards = myHand ? cardsByKeys(myHand, selected) : [];
   const preview = useMemo(() => {
     if (selectedCards.length === 0) return '';
-    const p = preferred(identify(selectedCards));
-    return p ? patternName({ type: p.type, rank: RANK_LABELS[p.main]!, length: p.length }) : '不成牌型';
+    const p = isDdz4 ? preferred4(identify4(selectedCards)) : preferred(identify(selectedCards));
+    return p ? patternName({ type: p.type, rank: RANK_LABELS[p.main]!, length: p.length }, state.gameType) : '不成牌型';
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCards.join(',')]);
+  }, [selectedCards.join(','), isDdz4]);
 
   if (load === 'notfound') {
     return (
@@ -243,10 +273,51 @@ export function RoomPage({ rid }: { rid: string }) {
   }
 
   const mySeatInfo = mySeat !== null ? room?.seats[mySeat] : null;
-  const gameRunning = !!g && g.phase !== 'finished';
+  const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : !!g && g.phase !== 'finished';
+  const readyControls = (
+    <div className="controls">
+      {mySeatInfo?.ready ? (
+        <button className="btn" disabled={busy} onClick={() => setReady(false)}>
+          取消准备
+        </button>
+      ) : (
+        <button className="btn btn-primary" disabled={busy} onClick={() => setReady(true)}>
+          准备
+        </button>
+      )}
+      <button className="btn" disabled={busy} onClick={leave}>
+        离开
+      </button>
+    </div>
+  );
 
   let controls = null;
-  if (playerMode) {
+  if (playerMode && isHoldem) {
+    const inHand = !!hg && mySeat !== null && hg.stacks[mySeat] !== null && hg.stacks[mySeat] !== undefined;
+    if (hg && inHand && gameRunning && hg.turn === mySeat && hg.legal) {
+      controls = (
+        <HoldemControls
+          legal={hg.legal}
+          stack={hg.stacks[mySeat!] ?? null}
+          bet={hg.bets[mySeat!] ?? 0}
+          busy={busy}
+          turnKey={`${hg.game_id}-${hg.turn_seq}`}
+          onAct={act}
+        />
+      );
+    } else if (!gameRunning) {
+      controls = readyControls;
+    } else {
+      controls = (
+        <div className="controls controls-waiting">
+          <span className="muted">{inHand ? (hg!.folded[mySeat!] ? '已弃牌，等待本手结束' : '等待其他玩家行动') : '本手进行中，你从下一手开始参加'}</span>
+          <button className="btn btn-small" disabled={busy} onClick={leave}>
+            离开
+          </button>
+        </div>
+      );
+    }
+  } else if (playerMode) {
     if (myTurn && g!.phase === 'bidding') {
       controls = (
         <div className="controls">
@@ -276,22 +347,7 @@ export function RoomPage({ rid }: { rid: string }) {
         </div>
       );
     } else if (!gameRunning) {
-      controls = (
-        <div className="controls">
-          {mySeatInfo?.ready ? (
-            <button className="btn" disabled={busy} onClick={() => setReady(false)}>
-              取消准备
-            </button>
-          ) : (
-            <button className="btn btn-primary" disabled={busy} onClick={() => setReady(true)}>
-              准备
-            </button>
-          )}
-          <button className="btn" disabled={busy} onClick={leave}>
-            离开
-          </button>
-        </div>
-      );
+      controls = readyControls;
     } else {
       controls = (
         <div className="controls controls-waiting">
@@ -316,8 +372,21 @@ export function RoomPage({ rid }: { rid: string }) {
 
   const filled = room ? room.seats.filter(Boolean).length : 0;
   const readyCount = room ? room.seats.filter((s) => s?.ready).length : 0;
-  const idleText = filled < 3 ? `等待玩家入座（${filled}/3）` : `等待准备（${readyCount}/3）`;
+  const seatTotal = isHoldem ? holdemSeats(state) : tableSeats(state);
+  const idleText = isHoldem
+    ? filled < 2
+      ? `等待玩家入座（${filled}/${seatTotal}，至少 2 人）`
+      : `等待准备（${readyCount}/${filled}）`
+    : filled < seatTotal
+      ? `等待玩家入座（${filled}/${seatTotal}）`
+      : `等待准备（${readyCount}/${seatTotal}）`;
   const hasEmpty = room ? room.seats.some((s) => !s) : false;
+  const finishedGid = isHoldem ? (hg?.phase === 'finished' ? hg.game_id : null) : g?.phase === 'finished' ? g.game_id : null;
+  const resultFooter = finishedGid ? (
+    <a className="btn btn-small" href={href.replay(finishedGid)}>
+      查看回放
+    </a>
+  ) : null;
 
   return (
     <div className="page room-page">
@@ -326,6 +395,7 @@ export function RoomPage({ rid }: { rid: string }) {
           ← 大厅
         </a>
         <h2>{room?.name ?? rid}</h2>
+        <span className={`badge game-badge game-${state.gameType}`}>{GAME_LABELS[state.gameType]}</span>
         <span className={`status status-${room?.status}`}>{room?.status === 'playing' ? '对局中' : '等待中'}</span>
         <span className="muted">
           围观 {room?.spectators ?? 0} · 已打 {room?.games_played ?? 0} 局
@@ -341,6 +411,19 @@ export function RoomPage({ rid }: { rid: string }) {
         </details>
       )}
       <div className="room-body">
+        {isHoldem ? (
+          <HoldemTable
+            state={state}
+            viewSeat={mySeat ?? 0}
+            reveal={false}
+            showTimers
+            mySeat={mySeat}
+            seatExtra={seatExtra}
+            controls={controls}
+            idleText={idleText}
+            resultFooter={resultFooter}
+          />
+        ) : (
         <Table
           state={state}
           viewSeat={mySeat ?? 0}
@@ -352,17 +435,12 @@ export function RoomPage({ rid }: { rid: string }) {
           seatExtra={seatExtra}
           controls={controls}
           idleText={idleText}
-          resultFooter={
-            g && g.phase === 'finished' ? (
-              <a className="btn btn-small" href={href.replay(g.game_id)}>
-                查看回放
-              </a>
-            ) : null
-          }
+          resultFooter={resultFooter}
         />
+        )}
         <aside className="room-side">
-          <h3>出牌记录</h3>
-          <History state={state} />
+          <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
+          {isHoldem ? <HoldemHistory state={state} /> : <History state={state} />}
         </aside>
       </div>
     </div>

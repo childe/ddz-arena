@@ -279,3 +279,181 @@ def test_rate_limited_play_is_retried():
     assert plays == [["3S"], ["3S"], ["3S"]]  # same move retried, no fallback
     assert b.stats["fallbacks"] == 0
     assert b.api_errors == {"429 RATE_LIMITED": 2}
+
+
+# ---------------------------------------------------------------- ddz4
+
+PLAYERS4 = PLAYERS + [{"seat": 3, "bot_id": "b_d"}]
+# 25 cards with duplicate codes (two decks)
+HAND4 = parse_short("33 4 55555 6 77 TJQKA XX DD 22222")
+
+
+def start4(b, game_id="g_4"):
+    b._handle(
+        ev(
+            1,
+            "game.started",
+            {
+                "players": PLAYERS4,
+                "first_bidder": 0,
+                "cards_left": [25, 25, 25, 25],
+                "hand": HAND4,
+            },
+            gid=game_id,
+        )
+    )
+
+
+def test_ddz4_detected_from_game_started_and_landlord_takes_8_bottom_cards():
+    b = make_bot()
+    assert len(HAND4) == 25 and HAND4.count("2S") == 2 and HAND4.count("5S") == 2
+    start4(b)
+    st = b.state
+    assert st.game == "ddz4" and b.game_type == "ddz4" and st.num_seats == 4
+    assert st.cards_left == [25, 25, 25, 25] and len(st.hand) == 25
+    bottom = ["3S", "3H", "4S", "8S", "8H", "9S", "TS", "JS"]
+    b._handle(
+        ev(
+            2,
+            "landlord.decided",
+            {"landlord": 1, "bottom": bottom, "high_bid": 2},
+            gid="g_4",
+        )
+    )
+    assert st.is_landlord and len(st.hand) == 33
+    assert st.cards_left == [25, 33, 25, 25]
+    assert st.hand.count("3S") == 2 and st.hand.count("BJ") == 2
+    assert st.teammates() == [] and st.next_seat() == 2
+
+
+def test_ddz4_legal_moves_and_play_tracking():
+    b = make_bot()
+    start4(b)
+    b._handle(
+        ev(
+            2,
+            "landlord.decided",
+            {"landlord": 0, "bottom": parse_short("3456789T"), "high_bid": 1},
+            gid="g_4",
+        )
+    )
+    st = b.state
+    assert st.teammates() == [2, 3] and st.is_teammate(3)
+    to_beat = {
+        "seat": 0,
+        "cards": ["KS", "KH"],
+        "pattern": {"type": "pair", "rank": "K", "length": 1},
+    }
+    b._handle(
+        ev(3, "turn", {"seat": 1, "to_beat": to_beat, "can_pass": True}, gid="g_4")
+    )
+    moves = st.legal_moves()
+    kinds = {(m.pattern.type, m.pattern.rank, m.pattern.length) for m in moves}
+    assert ("pair", "BJ", 1) in kinds and ("pair", "RJ", 1) in kinds  # BJ BJ / RJ RJ
+    assert ("bomb", "5", 5) in kinds and ("bomb", "5", 4) in kinds
+    assert ("rocket", "RJ", 4) in kinds
+    assert ("pair", "2", 1) in kinds
+    # the default bot plays the smallest move: the 4-card bomb of 5s (two 5S copies)
+    b._maybe_act()
+    plays = [c for c in b.client.calls if c[0] == "play"]
+    assert plays == [("play", "g_4", ["5S", "5S", "5H", "5C"], None, 3)]
+    b._handle(
+        ev(
+            4,
+            "played",
+            {
+                "seat": 1,
+                "cards": ["5S", "5S", "5H", "5C"],
+                "pattern": {"type": "bomb", "rank": "5", "length": 4},
+                "cards_left": [33, 21, 25, 25],
+                "multiplier": 2,
+                "auto": False,
+            },
+            gid="g_4",
+        )
+    )
+    assert len(st.hand) == 21 and [x for x in st.hand if x[0] == "5"] == ["5D"]
+
+
+def test_ddz4_duplicate_cards_are_locally_legal_and_fallback_uses_4p_rules():
+    class B(Bot):
+        def on_play(self, state):
+            return ["BJ", "RJ"]  # not a pattern in ddz4 (nor in ddz: rocket needs 1+1)
+
+    b = make_bot(B)
+    start4(b)
+    b._handle(
+        ev(
+            2,
+            "landlord.decided",
+            {"landlord": 1, "bottom": parse_short("346789TJ"), "high_bid": 1},
+            gid="g_4",
+        )
+    )
+    b._handle(ev(3, "turn", {"seat": 1, "to_beat": None, "can_pass": False}, gid="g_4"))
+    b._maybe_act()
+    plays = [c for c in b.client.calls if c[0] == "play"]
+    assert plays == [("play", "g_4", ["3S"], None, 3)]  # lowest single
+    assert b.stats["fallbacks"] == 1
+    assert b._locally_ok(["5S", "5S", "5H", "5C", "5D"], None, None)
+    assert not b._locally_ok(["5S", "5S", "5S"], None, None)  # only two copies
+
+
+def test_ddz4_game_type_from_room_and_state_resync():
+    state = {
+        "game_id": "g_9",
+        "room_id": "r_1",
+        "game": "ddz4",
+        "phase": "playing",
+        "seat": 1,
+        "hand": ["5S", "5S", "6S"],
+        "landlord": 0,
+        "bottom": parse_short("3456789T"),
+        "turn": 1,
+        "turn_seq": 70,
+        "to_beat": {
+            "seat": 0,
+            "cards": ["4S", "4S"],
+            "pattern": {"type": "pair", "rank": "4", "length": 1},
+        },
+        "can_pass": True,
+        "cards_left": [20, 3, 9, 11],
+        "history": [],
+        "bids": [{"seat": 0, "score": 3}],
+        "high_bid": 3,
+        "seq": 71,
+    }
+    b = make_bot(
+        state=state,
+        me={"bot_id": "b_me", "room_id": "r_1", "seat": 1, "game_id": "g_9"},
+    )
+    b._handle(
+        ev(
+            5,
+            "room.updated",
+            {"room": {"id": "r_1", "game": "ddz4", "status": "playing", "seats": []}},
+        )
+    )
+    assert b.game_type == "ddz4" and b.state.game == "ddz4"
+    b._handle({"type": "resync", "room_id": "r_1", "game_id": "g_9"})
+    st = b.state
+    assert st.game == "ddz4" and st.cards_left == [20, 3, 9, 11]
+    b._maybe_act()
+    assert [c for c in b.client.calls if c[0] == "play"] == [
+        ("play", "g_9", ["5S", "5S"], None, 71)
+    ]
+
+
+def test_ddz4_detected_from_state_cards_left_without_game_field():
+    b = make_bot()
+    b._apply_state(
+        {
+            "game_id": "g_5",
+            "phase": "bidding",
+            "seat": 1,
+            "hand": HAND4,
+            "turn": 0,
+            "cards_left": [25, 25, 25, 25],
+        }
+    )
+    assert b.state.game == "ddz4" and b.state.num_seats == 4

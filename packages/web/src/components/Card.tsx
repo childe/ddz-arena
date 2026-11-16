@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
-import { PATTERN_NAMES } from '@ddz/engine';
-import type { ApiPattern, Card as CardCode } from '../api.ts';
+import { PATTERN_NAMES, PATTERN_NAMES4 } from '@ddz/engine';
+import type { ApiPattern, Card as CardCode, GameType } from '../api.ts';
 
 const SUIT_SYMBOL: Record<string, string> = { S: '♠', H: '♥', C: '♣', D: '♦' };
 
@@ -13,9 +13,47 @@ export function isRed(code: CardCode): boolean {
   return code === 'RJ' || code[1] === 'H' || code[1] === 'D';
 }
 
-export function patternName(p: ApiPattern | null | undefined): string {
+export function patternName(p: ApiPattern | null | undefined, game?: GameType): string {
   if (!p) return '';
-  return (PATTERN_NAMES as Record<string, string>)[p.type] ?? p.type;
+  const names = (game === 'ddz4' ? PATTERN_NAMES4 : PATTERN_NAMES) as Record<string, string>;
+  const name = names[p.type] ?? p.type;
+  // ddz4 bombs have 4–8 cards; say how many.
+  return game === 'ddz4' && p.type === 'bomb' && p.length > 4 ? `${p.length} 张${name}` : name;
+}
+
+/**
+ * Stable, unique key per card in a list: the code plus its occurrence index (`3S#0`, `3S#1`).
+ * ddz4 hands hold two copies of a card, so the code alone is not unique.
+ */
+export function cardKeys(cards: CardCode[]): string[] {
+  const seen = new Map<CardCode, number>();
+  return cards.map((c) => {
+    const k = seen.get(c) ?? 0;
+    seen.set(c, k + 1);
+    return `${c}#${k}`;
+  });
+}
+
+/** Cards of `hand` whose occurrence key is in `keys` (hand order). */
+export function cardsByKeys(hand: CardCode[], keys: Set<string>): CardCode[] {
+  const ks = cardKeys(hand);
+  return hand.filter((_, i) => keys.has(ks[i]!));
+}
+
+/** Occurrence keys in `hand` for a multiset of cards (e.g. a hint move). */
+export function keysForCards(hand: CardCode[], cards: CardCode[]): Set<string> {
+  const want = new Map<CardCode, number>();
+  for (const c of cards) want.set(c, (want.get(c) ?? 0) + 1);
+  const ks = cardKeys(hand);
+  const out = new Set<string>();
+  hand.forEach((c, i) => {
+    const n = want.get(c) ?? 0;
+    if (n > 0) {
+      out.add(ks[i]!);
+      want.set(c, n - 1);
+    }
+  });
+  return out;
 }
 
 export type CardSize = 'lg' | 'md' | 'sm' | 'xs';
@@ -74,8 +112,10 @@ interface HandProps {
   /** Number of backs to draw when cards are hidden. */
   backs?: number;
   size?: CardSize;
-  selected?: Set<CardCode>;
-  onToggle?: (c: CardCode) => void;
+  /** Selected occurrence keys (see cardKeys). */
+  selected?: Set<string>;
+  /** Called with the occurrence key of the clicked card. */
+  onToggle?: (key: string) => void;
   /** Split into this many rows (for narrow side seats). */
   rows?: number;
   /** Max visible fraction of each card (0..1) when there is room. */
@@ -87,6 +127,7 @@ interface HandProps {
 /** Overlapping fan that always fits its container width (pure CSS). */
 export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate }: HandProps) {
   const items: (CardCode | null)[] = cards ? cards : new Array<null>(backs).fill(null);
+  const keys = cards ? cardKeys(cards) : items.map((_, i) => `b${i}`);
   if (items.length === 0) return <div className={`hand hand-${size} hand-empty ${className}`} />;
   const perRow = Math.ceil(items.length / rows);
   const chunks: (CardCode | null)[][] = [];
@@ -99,17 +140,20 @@ export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows =
           className={`hand hand-${size}${animate ? ' hand-anim' : ''}`}
           style={{ '--n1': Math.max(1, perRow - 1), '--spread': spread } as CSSProperties}
         >
-          {chunk.map((c, i) => (
-            <PlayingCard
-              key={c ?? `b${ri}-${i}`}
-              code={c ?? undefined}
-              back={c === null}
-              size={size}
-              selected={c !== null && !!selected?.has(c)}
-              onClick={c !== null && onToggle ? () => onToggle(c) : undefined}
-              style={animate ? { animationDelay: `${i * 25}ms` } : undefined}
-            />
-          ))}
+          {chunk.map((c, i) => {
+            const k = keys[ri * perRow + i]!;
+            return (
+              <PlayingCard
+                key={k}
+                code={c ?? undefined}
+                back={c === null}
+                size={size}
+                selected={c !== null && !!selected?.has(k)}
+                onClick={c !== null && onToggle ? () => onToggle(k) : undefined}
+                style={animate ? { animationDelay: `${i * 25}ms` } : undefined}
+              />
+            );
+          })}
         </div>
       ))}
     </div>

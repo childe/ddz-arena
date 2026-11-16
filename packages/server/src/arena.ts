@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import type { Seat } from '@ddz/engine';
 import { Db, type BotRow } from './db.ts';
 import { ApiError, conflict, notFound, badRequest } from './errors.ts';
-import { Room, newId, serializeResult, type RoomConfig, type RoomEvent, type FinishedGame, type Player } from './room.ts';
+import { Room, newId, type RoomConfig, type RoomEvent, type FinishedGame, type Player } from './room.ts';
+import { variantOf, type GameVariant } from './games/index.ts';
 
 const ROOM_IDLE_MS = 10 * 60_000;
 const NAME_RE = /^[\p{L}\p{N}_-]{1,24}$/u;
@@ -69,15 +69,16 @@ export class Arena {
     const room = this.roomOfBot(bot.id);
     return {
       bot_id: bot.id, name: bot.name, kind: bot.kind,
-      room_id: room?.id ?? null, seat: room?.seatOf(bot.id) ?? null, game_id: room?.status === 'playing' ? room.gameId : null,
+      room_id: room?.id ?? null, game: room?.variant.type ?? null, seat: room?.seatOf(bot.id) ?? null, game_id: room?.status === 'playing' && room.gameSeatOf(bot.id) >= 0 ? room.gameId : null,
     };
   }
 
   // ---------- rooms ----------
 
-  createRoom(name: unknown, config: unknown): Room {
+  createRoom(name: unknown, config: unknown, game?: unknown): Room {
     if (name !== undefined && (typeof name !== 'string' || name.length > 40)) throw badRequest('name must be a string up to 40 chars');
-    const room = new Room(name as string, parseConfig(config), {
+    const variant = variantOf(game);
+    const room = new Room(name as string, variant, parseConfig(config, variant), {
       broadcast: (r, ev) => this.broadcast(r, ev),
       gameStarted: (r, gid) => this.gameRoom.set(gid, r.id),
       gameFinished: (r, f) => this.persist(f),
@@ -98,7 +99,7 @@ export class Arena {
     return id ? this.rooms.get(id) : undefined;
   }
 
-  join(bot: BotRow, room: Room, seat?: number): Seat {
+  join(bot: BotRow, room: Room, seat?: number): number {
     const current = this.roomOfBot(bot.id);
     if (current && current !== room && current.seatOf(bot.id) !== null) {
       throw conflict('ALREADY_IN_ROOM', `you are already seated in room ${current.id}`, { room_id: current.id });
@@ -109,11 +110,12 @@ export class Arena {
     return s;
   }
 
-  quickJoin(bot: BotRow): { room: Room; seat: Seat } {
+  quickJoin(bot: BotRow, game?: unknown): { room: Room; seat: number } {
     const current = this.roomOfBot(bot.id);
     if (current && current.seatOf(bot.id) !== null) return { room: current, seat: current.seatOf(bot.id)! };
-    const open = [...this.rooms.values()].find((r) => r.status === 'waiting' && r.seats.some((s) => s === null) && r.seats.some((s) => s !== null));
-    const room = open ?? [...this.rooms.values()].find((r) => r.status === 'waiting' && r.seats.some((s) => s === null)) ?? this.createRoom(undefined, undefined);
+    const type = variantOf(game).type;
+    const candidates = [...this.rooms.values()].filter((r) => r.variant.type === type && r.status === 'waiting' && r.seats.some((s) => s === null));
+    const room = candidates.find((r) => r.seats.some((s) => s !== null)) ?? candidates[0] ?? this.createRoom(undefined, undefined, type);
     return { room, seat: this.join(bot, room) };
   }
 
@@ -144,17 +146,16 @@ export class Arena {
   // ---------- games ----------
 
   private persist(f: FinishedGame) {
-    const g = f.game;
-    const r = g.result!;
-    const replay = { ...f.publicView, seed: g.seed, initial_hands: g.initialHands, events: f.events.map(publicEvent) };
+    const g = f.session;
+    const replay = { ...f.publicView, ...g.replayData(), events: f.events.map(publicEvent) };
     this.db.insertGame(
       {
-        id: f.gameId, room_id: f.roomId, seed: g.seed, players: JSON.stringify(f.players),
-        result: JSON.stringify(serializeResult(r)), replay: JSON.stringify(replay), started_at: f.startedAt, finished_at: f.finishedAt,
+        id: f.gameId, room_id: f.roomId, game_type: f.gameType, seed: g.seed, players: JSON.stringify(f.players),
+        result: JSON.stringify(g.resultData()), replay: JSON.stringify(replay), started_at: f.startedAt, finished_at: f.finishedAt,
       },
-      f.players.map((p, seat) => ({
-        bot_id: p.bot_id, seat, is_landlord: g.landlord === seat ? 1 : 0, score: r.scores[seat]!,
-        win: r.kind === 'win' && (r.winner === 'landlord') === (g.landlord === seat) ? 1 : 0, timeouts: f.timeouts[seat]!,
+      g.outcomes().map((o) => ({
+        bot_id: f.players[o.seat]!.bot_id, seat: o.seat, is_landlord: o.isLandlord ? 1 : 0, score: o.score,
+        win: o.win ? 1 : 0, timeouts: f.timeouts[o.seat]!,
       })),
     );
   }
@@ -164,7 +165,7 @@ export class Arena {
     if (live) return live.publicGame();
     const row = this.db.game(gid);
     if (!row) throw notFound('game');
-    const { events: _e, seed: _s, initial_hands: _h, ...view } = JSON.parse(row.replay);
+    const { events: _e, seed: _s, initial_hands: _h, holes: _o, deck: _d, ...view } = JSON.parse(row.replay);
     return view;
   }
 
@@ -176,10 +177,10 @@ export class Arena {
     return JSON.parse(row.replay);
   }
 
-  recentGames(limit: number, botId?: string) {
-    return this.db.recentGames(limit, botId).map((g) => ({
-      game_id: g.id, room_id: g.room_id,
-      players: (JSON.parse(g.players) as Player[]).map((p, seat) => ({ seat, ...p })), result: JSON.parse(g.result),
+  recentGames(limit: number, botId?: string, game?: string) {
+    return this.db.recentGames(limit, botId, game).map((g) => ({
+      game_id: g.id, room_id: g.room_id, game: g.game_type,
+      players: (JSON.parse(g.players) as (Player | null)[]).flatMap((p, seat) => (p ? [{ seat, ...p }] : [])), result: JSON.parse(g.result),
       started_at: g.started_at, finished_at: g.finished_at,
     }));
   }
@@ -233,7 +234,9 @@ export class Arena {
       if (!s) return;
       const sockets = this.players.get(s.bot_id);
       if (!sockets?.size) return;
-      const msg = ev.priv?.[seat as Seat] ? JSON.stringify(personalize(ev, seat as Seat)) : pub;
+      // Private data goes to the seat's occupant only if they are the player of the current game.
+      const mine = ev.priv?.[seat] && (ev.game_id === null || room.gamePlayers[seat]?.bot_id === s.bot_id);
+      const msg = mine ? JSON.stringify(personalize(ev, seat)) : pub;
       for (const ws of sockets) send(ws, msg);
     });
   }
@@ -246,7 +249,7 @@ export class Arena {
   }
 
   /** Events for a reconnecting socket; null means the client must resync via /state. */
-  backlog(room: Room, since: number, seat: Seat | null): string[] | null {
+  backlog(room: Room, since: number, seat: number | null): string[] | null {
     const evs = room.eventsSince(since);
     if (!evs) return null;
     return evs.map((e) => JSON.stringify(seat !== null && e.priv?.[seat] ? personalize(e, seat) : publicEvent(e)));
@@ -262,24 +265,18 @@ export function publicEvent(ev: RoomEvent) {
   return rest;
 }
 
-function personalize(ev: RoomEvent, seat: Seat) {
+function personalize(ev: RoomEvent, seat: number) {
   const { priv, ...rest } = ev;
   return { ...rest, data: { ...rest.data, ...priv?.[seat] } };
 }
 
 const toPlayer = (b: BotRow): Player => ({ bot_id: b.id, name: b.name, kind: b.kind });
 
-function parseConfig(raw: unknown): Partial<RoomConfig> {
+function parseConfig(raw: unknown, variant: GameVariant): Partial<RoomConfig> {
   if (raw === undefined || raw === null) return {};
-  if (typeof raw !== 'object') throw badRequest('config must be an object');
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw badRequest('config must be an object');
   const c = raw as Record<string, unknown>;
-  const out: Partial<RoomConfig> = {};
-  for (const k of ['bid_timeout_ms', 'play_timeout_ms'] as const) {
-    if (c[k] === undefined) continue;
-    const v = c[k];
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1000 || v > 120_000) throw badRequest(`${k} must be an integer between 1000 and 120000`);
-    out[k] = v;
-  }
+  const out: Partial<RoomConfig> = variant.parseConfig(c);
   for (const k of ['legal_moves_api', 'auto_restart'] as const) {
     if (c[k] === undefined) continue;
     if (typeof c[k] !== 'boolean') throw badRequest(`${k} must be a boolean`);

@@ -3,11 +3,12 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { GameError, type Seat } from '@ddz/engine';
+import { GameError } from '@ddz/engine';
 import type { WebSocket } from 'ws';
 import { Arena } from './arena.ts';
 import { Db, type BotRow } from './db.ts';
 import { ApiError, badRequest } from './errors.ts';
+import { variantOf } from './games/index.ts';
 
 export interface AppOptions {
   dbPath: string;
@@ -117,12 +118,13 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   app.post('/api/v1/rooms', async (req, reply) => {
     auth(req);
     const b = body(req);
-    const room = arena.createRoom(b.name, b.config);
+    const room = arena.createRoom(b.name, b.config, b.game);
     reply.status(201);
     return room.summary();
   });
   app.post('/api/v1/rooms/quick-join', async (req) => {
-    const { room, seat } = arena.quickJoin(auth(req));
+    const bot = auth(req);
+    const { room, seat } = arena.quickJoin(bot, body(req).game);
     return { room: room.summary(), seat };
   });
   app.get<P>('/api/v1/rooms/:rid', async (req) => {
@@ -133,7 +135,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     const bot = auth(req);
     const room = arena.room(req.params.rid);
     const seat = body(req).seat;
-    if (seat !== undefined && seat !== null && typeof seat !== 'number') throw badRequest('seat must be 0, 1 or 2');
+    if (seat !== undefined && seat !== null && typeof seat !== 'number') throw badRequest('seat must be a number');
     const s = arena.join(bot, room, seat as number | undefined);
     return { room: room.summary(), seat: s };
   });
@@ -157,8 +159,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     arena.publicGame(gid); // throws 404 if unknown
     throw new ApiError(409, 'WRONG_PHASE', 'game is finished');
   };
-  const doBid = (bot: BotRow, gid: string, b: Record<string, unknown>) => liveRoomFor(gid).bid(bot.id, b.score, b.seq);
-  const doPlay = (bot: BotRow, gid: string, b: Record<string, unknown>) => liveRoomFor(gid).play(bot.id, b.cards, b.pattern, b.seq);
+  const doAct = (bot: BotRow, gid: string, op: string, b: Record<string, unknown>) => liveRoomFor(gid).act(bot.id, op, b);
 
   app.get<P>('/api/v1/games/:gid/state', async (req) => {
     const bot = auth(req);
@@ -168,23 +169,28 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
       arena.publicGame(gid);
       throw new ApiError(409, 'WRONG_PHASE', 'game is finished; use /replay');
     }
-    const seat = room.gamePlayers.findIndex((p) => p.bot_id === bot.id);
+    const seat = room.gameSeatOf(bot.id);
     if (seat < 0) throw new ApiError(403, 'NOT_A_PLAYER', 'you are not a player in this game');
-    return room.playerGame(seat as Seat);
+    return room.playerGame(seat);
   });
   app.get<P>('/api/v1/games/:gid/legal-moves', async (req) => {
     const bot = auth(req);
     return liveRoomFor(req.params.gid).legalMoves(bot.id);
   });
-  app.post<P>('/api/v1/games/:gid/bid', async (req) => doBid(auth(req), req.params.gid, body(req)));
-  app.post<P>('/api/v1/games/:gid/play', async (req) => doPlay(auth(req), req.params.gid, body(req)));
+  for (const op of ['bid', 'play', 'action']) {
+    app.post<P>(`/api/v1/games/:gid/${op}`, async (req) => doAct(auth(req), req.params.gid, op, body(req)));
+  }
   app.get<P>('/api/v1/games/:gid', async (req) => arena.publicGame(req.params.gid));
   app.get<P>('/api/v1/games/:gid/replay', async (req) => arena.replay(req.params.gid));
-  app.get<{ Querystring: { limit?: string; bot_id?: string } }>('/api/v1/games', async (req) => {
+  app.get<{ Querystring: { limit?: string; bot_id?: string; game?: string } }>('/api/v1/games', async (req) => {
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    return { games: arena.recentGames(limit, req.query.bot_id) };
+    const game = req.query.game === undefined ? undefined : variantOf(req.query.game).type;
+    return { games: arena.recentGames(limit, req.query.bot_id, game) };
   });
-  app.get('/api/v1/leaderboard', async () => ({ bots: arena.db.leaderboard() }));
+  app.get<{ Querystring: { game?: string } }>('/api/v1/leaderboard', async (req) => ({
+    game: variantOf(req.query.game).type,
+    bots: arena.db.leaderboard(variantOf(req.query.game).type),
+  }));
   app.get('/api/v1/docs', async (_req, reply) => {
     if (!opts.docsPath || !existsSync(opts.docsPath)) throw new ApiError(404, 'NOT_FOUND', 'docs not found');
     reply.type('text/markdown; charset=utf-8');
@@ -232,7 +238,8 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     sendJson(ws, { type: 'hello', seq: null, ts: Date.now(), room_id: room?.id ?? null, game_id: room?.gameId ?? null, data: { bot_id: bot.id, room_id: room?.id ?? null, seq: room?.seq ?? 0 } });
     const since = sinceOf(req.query);
     if (room && since !== null && Number.isFinite(since)) {
-      const backlog = arena.backlog(room, since, room.seatOf(bot.id));
+      const gameSeat = room.gameSeatOf(bot.id);
+      const backlog = arena.backlog(room, since, gameSeat >= 0 ? gameSeat : null);
       if (backlog === null) sendJson(ws, { type: 'resync', room_id: room.id, game_id: room.gameId });
       else for (const m of backlog) ws.send(m);
     }
@@ -246,13 +253,13 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
         return sendJson(ws, { type: 'error', data: { code: 'BAD_REQUEST', message: 'invalid JSON' } });
       }
       if (msg.op === 'ping') return sendJson(ws, { type: 'pong', ts: Date.now() });
-      if (msg.op !== 'bid' && msg.op !== 'play') return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid or play' } } });
+      if (msg.op !== 'bid' && msg.op !== 'play' && msg.op !== 'action') return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid, play or action' } } });
       let status = 200;
       let result: unknown;
       try {
         if (!limiter.take(bot.id)) throw new ApiError(429, 'RATE_LIMITED', 'too many requests');
         if (typeof msg.game_id !== 'string') throw badRequest('game_id is required');
-        result = msg.op === 'bid' ? doBid(bot, msg.game_id, msg) : doPlay(bot, msg.game_id, msg);
+        result = doAct(bot, msg.game_id, msg.op, msg);
       } catch (e) {
         if (e instanceof ApiError || e instanceof GameError) {
           status = e.status;

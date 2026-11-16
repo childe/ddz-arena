@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 
-USER_AGENT = "ddz-sdk-python/0.1.0"
+USER_AGENT = "ddz-sdk-python/0.2.0"
 
 
 class ApiError(Exception):
@@ -122,22 +122,34 @@ class Client:
         return self._req("GET", "/rooms").get("rooms", [])
 
     def create_room(
-        self, name: Optional[str] = None, config: Optional[Dict[str, Any]] = None
+        self,
+        name: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        game: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """``POST /rooms`` -> ``Room``. ``game``: ``"ddz"`` (default), ``"ddz4"`` or ``"holdem"``.
+
+        Example: ``create_room("table", {"seats": 6}, game="holdem")``.
+        """
         body: Dict[str, Any] = {}
         if name is not None:
             body["name"] = name
+        if game is not None:
+            body["game"] = game
         if config is not None:
             body["config"] = config
         return self._req("POST", "/rooms", body)
 
     def get_room(self, room_id: str) -> Dict[str, Any]:
-        """-> ``{"room": Room, "game": PublicGame | None}``."""
+        """-> ``{"room": Room, "game": PublicGame | None, "seq": int}``."""
         return self._req("GET", "/rooms/%s" % _q(room_id))
 
-    def quick_join(self) -> Dict[str, Any]:
-        """-> ``{"room": Room, "seat": int}``."""
-        return self._req("POST", "/rooms/quick-join", {})
+    def quick_join(self, game: Optional[str] = None) -> Dict[str, Any]:
+        """-> ``{"room": Room, "seat": int}``. Only joins rooms of ``game`` (default ``ddz``)."""
+        body: Dict[str, Any] = {}
+        if game is not None:
+            body["game"] = game
+        return self._req("POST", "/rooms/quick-join", body)
 
     def join_room(self, room_id: str, seat: Optional[int] = None) -> Dict[str, Any]:
         body: Dict[str, Any] = {}
@@ -157,7 +169,9 @@ class Client:
         return self._req("GET", "/games/%s/state" % _q(game_id))
 
     def legal_moves(self, game_id: str) -> Dict[str, Any]:
-        """-> ``{"moves": [{"cards","pattern"}], "can_pass"}``. May 403 LEGAL_MOVES_DISABLED."""
+        """Dou Dizhu: ``{"moves": [{"cards","pattern"}], "can_pass"}``; Hold'em:
+        ``{"actions": {"fold","check","call","raise"} | None}``. May 403 LEGAL_MOVES_DISABLED.
+        """
         return self._req("GET", "/games/%s/legal-moves" % _q(game_id))
 
     def bid(
@@ -186,6 +200,25 @@ class Client:
     def pass_turn(self, game_id: str, seq: Optional[int] = None) -> Dict[str, Any]:
         return self.play(game_id, [], seq=seq)
 
+    def action(
+        self,
+        game_id: str,
+        action: str,
+        amount: Optional[int] = None,
+        seq: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Hold'em: ``POST /games/{gid}/action`` -> ``{"ok": true, "seq"}``.
+
+        ``action`` is ``"fold"``, ``"check"``, ``"call"`` or ``"raise"``; for ``raise``,
+        ``amount`` is your total bet for this street (raise-to), not the increment.
+        """
+        body: Dict[str, Any] = {"action": action}
+        if amount is not None:
+            body["amount"] = int(amount)
+        if seq is not None:
+            body["seq"] = seq
+        return self._req("POST", "/games/%s/action" % _q(game_id), body)
+
     def get_game(self, game_id: str) -> Dict[str, Any]:
         """``PublicGame`` (spectator view)."""
         return self._req("GET", "/games/%s" % _q(game_id))
@@ -194,17 +227,27 @@ class Client:
         return self._req("GET", "/games/%s/replay" % _q(game_id))
 
     def list_games(
-        self, limit: int = 20, bot_id: Optional[str] = None
+        self,
+        limit: int = 20,
+        bot_id: Optional[str] = None,
+        game: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Recent finished games (``GameSummary`` list), optionally of one ``game`` type."""
         params: Dict[str, Any] = {"limit": limit}
         if bot_id:
             params["bot_id"] = bot_id
+        if game:
+            params["game"] = game
         return self._req("GET", "/games?" + urllib.parse.urlencode(params)).get(
             "games", []
         )
 
-    def leaderboard(self) -> List[Dict[str, Any]]:
-        return self._req("GET", "/leaderboard").get("bots", [])
+    def leaderboard(self, game: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Leaderboard rows for one game type (server default ``ddz``)."""
+        path = "/leaderboard"
+        if game:
+            path += "?" + urllib.parse.urlencode({"game": game})
+        return self._req("GET", path).get("bots", [])
 
 
 def _q(s: str) -> str:

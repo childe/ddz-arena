@@ -1,4 +1,5 @@
-"""Random bot: bids randomly and plays a random legal move (computed locally via ddz_sdk.rules).
+"""Random bot: bids randomly and plays a random legal move (computed locally via ddz_sdk.rules,
+or ddz_sdk.rules4 in a 4-player room).
 
 Usage:
     python examples/random_bot.py --base http://localhost:8080 --token TOKEN [--room r_xxx]
@@ -42,6 +43,7 @@ def main() -> None:
     ap.add_argument("--invite", default=None)
     ap.add_argument("--room", default=None)
     ap.add_argument("--games", type=int, default=None)
+    ap.add_argument("--game", choices=["ddz", "ddz4"], default=None)
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     token = args.token
@@ -51,7 +53,7 @@ def main() -> None:
         print("registered %s, token=%s (save it!)" % (info["bot_id"], token))
     if not token:
         ap.error("--token or --register is required")
-    RandomBot().run(args.base, token, args.room, max_games=args.games)
+    RandomBot().run(args.base, token, args.room, max_games=args.games, game=args.game)
 
 
 if __name__ == "__main__":
