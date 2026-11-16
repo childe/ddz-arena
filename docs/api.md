@@ -1,6 +1,6 @@
 # 斗地主 Bot 接口文档
 
-Base URL：`http://43.128.99.230`（下文路径都相对于它），WebSocket 地址把 `http` 换成 `ws`。所有请求和响应都是 JSON。
+Base URL：`https://ddz.ohmycat.me`（下文路径都相对于它），WebSocket 地址把 `https` 换成 `wss`（即 `wss://ddz.ohmycat.me`）。域名经过 Cloudflare 代理；也可以用 `http://43.128.99.230` 直连服务器。所有请求和响应都是 JSON。
 
 接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程。
 
@@ -8,7 +8,7 @@ Base URL：`http://43.128.99.230`（下文路径都相对于它），WebSocket �
 |---|---|
 | 本文 | 完整协议、规则、错误码 |
 | [`/api/v1/openapi.yaml`](/api/v1/openapi.yaml) | OpenAPI 3.1 机器可读规范，可用 openapi-generator 等工具生成 Go / Java / Rust / C# 等语言的 HTTP 客户端 |
-| [`/api/v1/examples/node-bot.mjs`](/api/v1/examples/node-bot.mjs) | 零依赖的 Node.js 单文件 bot（约 120 行），可作为移植到其他语言的参照。运行：`node node-bot.mjs --base http://43.128.99.230 --invite <邀请码> --verbose` |
+| [`/api/v1/examples/node-bot.mjs`](/api/v1/examples/node-bot.mjs) | 零依赖的 Node.js 单文件 bot（约 120 行），可作为移植到其他语言的参照。运行：`node node-bot.mjs --base https://ddz.ohmycat.me --invite <邀请码> --verbose` |
 | [Python SDK](https://github.com/childe/ddz-arena/tree/main/sdk/python) | `pip install "git+https://github.com/childe/ddz-arena.git#subdirectory=sdk/python"`；含完整规则实现（牌型识别、合法出牌枚举），可供移植 |
 | [规则引擎](https://github.com/childe/ddz-arena/tree/main/packages/engine/src) | 服务端使用的规则引擎（TypeScript），判定以它为准 |
 | [GitHub 仓库](https://github.com/childe/ddz-arena) | 全部源码，问题和建议请提 Issue |
@@ -16,11 +16,11 @@ Base URL：`http://43.128.99.230`（下文路径都相对于它），WebSocket �
 ## 1. 快速上手
 
 ```bash
-BASE=http://43.128.99.230
+BASE=https://ddz.ohmycat.me
 # 1. 注册 bot，拿到 token（只返回一次，请保存）
 curl -X POST $BASE/api/v1/bots -H 'content-type: application/json' -d '{"name":"my-bot","invite_code":"..."}'
 # 2. 连 WebSocket 收推送
-wscat -c "ws://43.128.99.230/ws?token=$TOKEN"
+wscat -c "wss://ddz.ohmycat.me/ws?token=$TOKEN"
 # 3. 快速入座（有空位就坐，没有就新建房间），然后准备
 curl -X POST $BASE/api/v1/rooms/quick-join -H "authorization: Bearer $TOKEN"
 curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
@@ -30,6 +30,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 ## 2. 约定
 
 - 认证：`Authorization: Bearer <token>`。WebSocket 用查询参数 `?token=`。
+- User-Agent：域名前面有 Cloudflare，它会拦截 Python 标准库默认的 `Python-urllib/x.y`（返回 `403`，错误码 1010）。用 `urllib` 时请自己设一个 `User-Agent`，例如 `my-bot/1.0`。
 - 座位：`0`、`1`、`2`，出牌顺序是 0→1→2→0。
 - 牌：点数 `3456789TJQKA2` + 花色 `SHCD`，例如 `3S`、`TH`、`2D`；小王 `BJ`，大王 `RJ`。
 - 点数（rank）：`3 4 5 6 7 8 9 T J Q K A 2 BJ RJ`，从小到大。

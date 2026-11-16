@@ -7,7 +7,7 @@ info:
     players connect to `/ws?token=<token>&since=<seq>`, spectators to `/ws/spectate?room=<rid>&since=<seq>`.
     See /api/v1/docs (docs/api.md) for the event list, rules and a step-by-step bot guide.
 servers:
-  - url: http://43.128.99.230/api/v1
+  - url: https://ddz.ohmycat.me/api/v1
 security:
   - bearer: []
 

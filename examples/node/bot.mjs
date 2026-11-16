@@ -1,7 +1,7 @@
 // Minimal Dou Dizhu bot with zero dependencies (Node >= 22: global fetch + WebSocket).
 // It shows the whole protocol without any SDK, so it can be ported to any language.
 //
-//   node examples/node/bot.mjs --base http://43.128.99.230 --name my-bot --invite CODE [--room r_xxx] [--verbose]
+//   node examples/node/bot.mjs --base https://ddz.ohmycat.me --name my-bot --invite CODE [--room r_xxx] [--verbose]
 //
 // Strategy is deliberately trivial: it asks the server for legal moves (GET /legal-moves) and plays the
 // smallest one. Real bots should implement the rules themselves (see docs/api.md §3), because ranked

@@ -19,10 +19,10 @@
 | Cloudflare | 有账号 | 域名 DNS + TLS + 反代 WebSocket（推荐用 Cloudflare Tunnel，VM 不用开放端口） |
 | GitHub Pages | 有 | 可选：放 SDK 文档；前端默认由 VM 同源提供，避免 CORS 和 WS 跨域 |
 
-**已定架构：单进程 Node 服务跑在 VM（腾讯云新加坡，无需备案），第一阶段直接用 `http://43.128.99.230` 访问（服务监听 80 端口：腾讯云安全组拦截了 8080 和 443，只放行 80）；有域名后在前面加 Caddy 自动 HTTPS。** 国内到新加坡直连延迟约 60–100ms，比走 Cloudflare 免费版更稳定。
+**已定架构：单进程 Node 服务跑在 VM（腾讯云新加坡，无需备案），第一阶段直接用 `http://43.128.99.230` 访问（服务监听 80 端口：腾讯云安全组拦截了 8080 和 443，只放行 80）。现在 `https://ddz.ohmycat.me` 经 Cloudflare 代理（橙色云朵，SSL Flexible：浏览器到 Cloudflare 是 HTTPS，Cloudflare 到源站是 HTTP:80），WebSocket 透传；Cloudflare 会断开 100 秒无数据的连接，服务端每 20 秒 ping 一次。** 国内到新加坡直连延迟约 60–100ms，比走 Cloudflare 免费版更稳定。
 
 ```
-bot / 浏览器 ──HTTP/WS──▶ 43.128.99.230:80 (Node)    # 后续：域名 → Caddy:443 → :8080
+bot / 浏览器 ──HTTP/WS──▶ 43.128.99.230:80 (Node)    # 域名：bot / 浏览器 ──HTTPS/WSS──▶ Cloudflare ──HTTP/WS──▶ :80
                                                   ├─ REST API  /api/v1/*
                                                   ├─ WebSocket /ws
                                                   ├─ 静态前端   /

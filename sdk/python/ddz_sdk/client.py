@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 
+USER_AGENT = "ddz-sdk-python/0.1.0"
+
 
 class ApiError(Exception):
     """A non-2xx response. ``status`` is the HTTP status (0 for network errors)."""
@@ -51,7 +53,8 @@ def request(
     """Low-level JSON request. ``path`` is relative to ``/api/v1`` (e.g. ``"/me"``)."""
     url = base_url.rstrip("/") + "/api/v1" + path
     data = None
-    headers = {"accept": "application/json"}
+    # A custom User-Agent: CDNs such as Cloudflare block the default "Python-urllib/x.y".
+    headers = {"accept": "application/json", "user-agent": USER_AGENT}
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["content-type"] = "application/json"

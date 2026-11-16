@@ -24,7 +24,7 @@ import websocket  # websocket-client
 
 from . import rules
 from .cards import contains_all, remove_cards, sort_cards
-from .client import ApiError, Client
+from .client import USER_AGENT, ApiError, Client
 from .rules import Move, Pattern
 
 log = logging.getLogger("ddz_sdk.bot")
@@ -266,7 +266,9 @@ class Bot:
         url = self.client.ws_url + "/ws?token=" + self.client.token
         if since:
             url += "&since=%d" % since
-        ws = websocket.create_connection(url, timeout=10)
+        ws = websocket.create_connection(
+            url, timeout=10, header=["User-Agent: " + USER_AGENT]
+        )
         ws.settimeout(None)
         self._ws = ws
         # drain any stale items from a previous connection

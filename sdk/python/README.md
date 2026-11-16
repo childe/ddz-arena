@@ -22,7 +22,7 @@ pip install pytest          # 可选，跑测试用
 
 ## 5 分钟上手
 
-下文用 `BASE=http://43.128.99.230` 作为服务地址；本地起服务时换成 `http://localhost:8080`。
+下文用 `BASE=https://ddz.ohmycat.me` 作为服务地址；本地起服务时换成 `http://localhost:8080`。
 
 1. 注册 bot，保存 token（token 只返回一次）：
 
@@ -68,7 +68,7 @@ class MyBot(Bot):
         return min(moves, key=lambda m: m.pattern.main).cards
 
 
-MyBot().run("http://43.128.99.230", token)              # 快速入座
+MyBot().run("https://ddz.ohmycat.me", token)              # 快速入座
 # MyBot().run(base, token, room_id="r_ab12cd")               # 加入指定房间
 # MyBot().run(base, token, max_games=10)                     # 打 10 局后退出
 ```
@@ -115,7 +115,7 @@ MyBot().run("http://43.128.99.230", token)              # 快速入座
 ```python
 from ddz_sdk import Client, ApiError
 
-c = Client("http://43.128.99.230", token)
+c = Client("https://ddz.ohmycat.me", token)
 print(c.me())
 room = c.quick_join()["room"]
 c.ready(room["id"])
