@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { PATTERN_NAMES, PATTERN_NAMES4 } from '@ddz/engine';
+import { GD_PATTERN_NAMES, PATTERN_NAMES, PATTERN_NAMES4 } from '@ddz/engine';
 import type { ApiPattern, Card as CardCode, GameType } from '../api.ts';
 
 const SUIT_SYMBOL: Record<string, string> = { S: '♠', H: '♥', C: '♣', D: '♦' };
@@ -15,6 +15,11 @@ export function isRed(code: CardCode): boolean {
 
 export function patternName(p: ApiPattern | null | undefined, game?: GameType): string {
   if (!p) return '';
+  if (game === 'guandan') {
+    const name = (GD_PATTERN_NAMES as Record<string, string>)[p.type] ?? p.type;
+    // Guandan bombs have 4–8 cards; always say how many.
+    return p.type === 'bomb' ? `${p.length} 张${name}` : name;
+  }
   const names = (game === 'ddz4' ? PATTERN_NAMES4 : PATTERN_NAMES) as Record<string, string>;
   const name = names[p.type] ?? p.type;
   // ddz4 bombs have 4–8 cards; say how many.
@@ -66,10 +71,14 @@ interface CardProps {
   onClick?: () => void;
   style?: CSSProperties;
   className?: string;
+  /** Guandan wildcard (逢人配): drawn with a gold frame and a 配 tag. */
+  wild?: boolean;
+  /** Greyed out and not clickable (e.g. cards that cannot be returned). */
+  disabled?: boolean;
 }
 
-export function PlayingCard({ code, back, size = 'md', selected, onClick, style, className = '' }: CardProps) {
-  const cls = `card card-${size}${selected ? ' selected' : ''}${onClick ? ' clickable' : ''} ${className}`;
+export function PlayingCard({ code, back, size = 'md', selected, onClick, style, className = '', wild, disabled }: CardProps) {
+  const cls = `card card-${size}${selected ? ' selected' : ''}${onClick ? ' clickable' : ''}${wild ? ' card-wild' : ''}${disabled ? ' card-disabled' : ''} ${className}`;
   if (back || !code) {
     return (
       <div className={`${cls} card-back`} style={style} aria-label="牌背" onClick={onClick}>
@@ -86,7 +95,8 @@ export function PlayingCard({ code, back, size = 'md', selected, onClick, style,
       style={style}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
-      aria-label={joker ? (code === 'RJ' ? '大王' : '小王') : `${suit}${rankLabel(code)}`}
+      aria-label={joker ? (code === 'RJ' ? '大王' : '小王') : `${suit}${rankLabel(code)}${wild ? '（逢人配）' : ''}`}
+      aria-disabled={disabled || undefined}
       aria-pressed={onClick ? !!selected : undefined}
     >
       {joker ? (
@@ -101,6 +111,7 @@ export function PlayingCard({ code, back, size = 'md', selected, onClick, style,
             <span className="card-suit">{suit}</span>
           </div>
           <div className="card-center">{suit}</div>
+          {wild && <div className="wild-tag">配</div>}
         </>
       )}
     </div>
@@ -122,10 +133,14 @@ interface HandProps {
   spread?: number;
   className?: string;
   animate?: boolean;
+  /** Guandan wildcard code (e.g. "7H"); copies of it are marked. */
+  wild?: CardCode;
+  /** Cards for which this returns false are greyed out and not clickable. */
+  enabled?: (code: CardCode) => boolean;
 }
 
 /** Overlapping fan that always fits its container width (pure CSS). */
-export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate }: HandProps) {
+export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate, wild, enabled }: HandProps) {
   const items: (CardCode | null)[] = cards ? cards : new Array<null>(backs).fill(null);
   const keys = cards ? cardKeys(cards) : items.map((_, i) => `b${i}`);
   if (items.length === 0) return <div className={`hand hand-${size} hand-empty ${className}`} />;
@@ -142,6 +157,7 @@ export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows =
         >
           {chunk.map((c, i) => {
             const k = keys[ri * perRow + i]!;
+            const off = c !== null && enabled ? !enabled(c) : false;
             return (
               <PlayingCard
                 key={k}
@@ -149,7 +165,9 @@ export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows =
                 back={c === null}
                 size={size}
                 selected={c !== null && !!selected?.has(k)}
-                onClick={c !== null && onToggle ? () => onToggle(k) : undefined}
+                onClick={c !== null && onToggle && !off ? () => onToggle(k) : undefined}
+                wild={c !== null && c === wild}
+                disabled={off}
                 style={animate ? { animationDelay: `${i * 25}ms` } : undefined}
               />
             );

@@ -1,5 +1,5 @@
 [Unit]
-Description=Game arena endless demo tables (ddz, ddz4, holdem)
+Description=Game arena endless demo tables (ddz, ddz4, holdem, guandan)
 After=ddz.service
 Wants=ddz.service
 

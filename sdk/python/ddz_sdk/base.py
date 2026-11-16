@@ -1,5 +1,5 @@
-"""Game-independent bot lifecycle shared by :class:`ddz_sdk.Bot` (Dou Dizhu, 3 or 4 players)
-and :class:`ddz_sdk.HoldemBot` (Texas Hold'em).
+"""Game-independent bot lifecycle shared by :class:`ddz_sdk.Bot` (Dou Dizhu, 3 or 4 players),
+:class:`ddz_sdk.GuandanBot` (Guandan) and :class:`ddz_sdk.HoldemBot` (Texas Hold'em).
 
 :class:`BaseBot` handles the protocol: it joins a room (quick-join for a game type, or a given
 room), connects the player WebSocket first-come (reconnecting with backoff and
@@ -24,7 +24,7 @@ from .client import USER_AGENT, ApiError, Client
 log = logging.getLogger("ddz_sdk.bot")
 
 #: game types known to the SDK
-GAME_TYPES = ("ddz", "ddz4", "holdem")
+GAME_TYPES = ("ddz", "ddz4", "holdem", "guandan")
 
 
 class BaseBot:
@@ -43,7 +43,8 @@ class BaseBot:
         self.state: Any = self._new_state()
         self.client: Optional[Client] = None
         self.bot_id: Optional[str] = None
-        #: game type of the room we sit in (``"ddz"``, ``"ddz4"``, ``"holdem"``), once known
+        #: game type of the room we sit in (``"ddz"``, ``"ddz4"``, ``"holdem"``,
+        #: ``"guandan"``), once known
         self.game_type: Optional[str] = None
         self.games_finished = 0
         self.max_games: Optional[int] = None

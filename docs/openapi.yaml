@@ -291,6 +291,7 @@ paths:
                   required: [type]
                   properties:
                     type: { $ref: '#/components/schemas/PatternType' }
+                    rank: { type: string, description: 'Guandan only: rank label of the intended interpretation (straights: the top card)' }
                 seq: { type: integer, description: seq of the turn event you are answering }
       responses:
         '200': { $ref: '#/components/responses/ActionOk' }
@@ -325,6 +326,30 @@ paths:
               properties:
                 action: { type: string, enum: [fold, check, call, raise] }
                 amount: { type: integer, description: 'raise only: your total bet for this street (raise-to), between min_raise_to and max_raise_to' }
+                seq: { type: integer, description: seq of the turn event you are answering }
+      responses:
+        '200': { $ref: '#/components/responses/ActionOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /games/{gid}/return:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    post:
+      operationId: guandanReturn
+      summary: 'Guandan only: return a card to the player who paid you tribute (natural rank 2–10, not a joker or the wildcard)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card]
+              properties:
+                card: { $ref: '#/components/schemas/Card' }
                 seq: { type: integer, description: seq of the turn event you are answering }
       responses:
         '200': { $ref: '#/components/responses/ActionOk' }
@@ -403,7 +428,7 @@ components:
     Name: { type: string, pattern: '^[\p{L}\p{N}_-]{1,24}$' }
     Kind: { type: string, enum: [bot, human] }
     Seat: { type: integer, minimum: 0, maximum: 5, description: '0-2 for ddz, 0-3 for ddz4, 0..seats-1 for holdem' }
-    GameType: { type: string, enum: [ddz, ddz4, holdem], default: ddz, description: "ddz = 3-player Dou Dizhu, ddz4 = 4-player Dou Dizhu, holdem = No-Limit Texas Hold'em" }
+    GameType: { type: string, enum: [ddz, ddz4, holdem, guandan], default: ddz, description: "ddz = 3-player Dou Dizhu, ddz4 = 4-player Dou Dizhu, holdem = No-Limit Texas Hold'em, guandan = Guandan (4 players, two teams)" }
     Card:
       type: string
       description: Rank 3456789TJQKA2 + suit SHCD; BJ = small joker, RJ = big joker
@@ -412,7 +437,8 @@ components:
     Cards: { type: array, items: { $ref: '#/components/schemas/Card' } }
     PatternType:
       type: string
-      enum: [single, pair, triple, triple_single, triple_pair, straight, pair_chain, plane, plane_single, plane_pair, four_two_single, four_two_pair, bomb, rocket]
+      enum: [single, pair, triple, triple_single, triple_pair, straight, pair_chain, plane, plane_single, plane_pair, four_two_single, four_two_pair, bomb, straight_flush, rocket]
+      description: straight_flush is Guandan only; Guandan's pair_chain is exactly 3 pairs (木板) and plane exactly 2 triples (钢板)
     Pattern:
       type: object
       required: [type, rank, length]

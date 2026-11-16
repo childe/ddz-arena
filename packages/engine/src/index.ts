@@ -5,3 +5,4 @@ export * from './rng.ts';
 export * from './game.ts';
 export * from './ddz4/index.ts';
 export * from './holdem/index.ts';
+export * from './guandan/index.ts';

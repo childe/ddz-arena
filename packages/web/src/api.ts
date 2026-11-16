@@ -2,14 +2,14 @@
 
 export type Card = string;
 export type Phase = 'bidding' | 'playing' | 'finished';
-export type GameType = 'ddz' | 'ddz4' | 'holdem';
+export type GameType = 'ddz' | 'ddz4' | 'holdem' | 'guandan';
 
-export const GAME_TYPES: GameType[] = ['ddz', 'ddz4', 'holdem'];
-export const GAME_LABELS: Record<GameType, string> = { ddz: '三人斗地主', ddz4: '四人斗地主', holdem: '德州扑克' };
+export const GAME_TYPES: GameType[] = ['ddz', 'ddz4', 'holdem', 'guandan'];
+export const GAME_LABELS: Record<GameType, string> = { ddz: '三人斗地主', ddz4: '四人斗地主', holdem: '德州扑克', guandan: '掼蛋' };
 
 /** Normalizes an unknown `game` field (missing = ddz, the server default). */
 export function gameTypeOf(v: unknown): GameType {
-  return v === 'ddz4' || v === 'holdem' ? v : 'ddz';
+  return v === 'ddz4' || v === 'holdem' || v === 'guandan' ? v : 'ddz';
 }
 
 export interface ApiPattern {
@@ -197,8 +197,86 @@ export interface HoldemReplay extends HoldemPublicGame {
   events: WsEvent[];
 }
 
-export type AnyPublicGame = PublicGame | HoldemPublicGame;
-export type AnyReplay = Replay | HoldemReplay;
+// ---- Guandan (docs/guandan.md section 5) ----
+
+export type GdPhase = 'return' | 'playing' | 'finished';
+
+/** One tribute (进贡) or return (还贡): `from` gives `card` to `to`. */
+export interface GdTransfer {
+  from: number;
+  to: number;
+  card: Card;
+  auto?: boolean;
+}
+
+export interface GdTributeInfo {
+  /** True when the tribute was refused with two big jokers (抗贡). */
+  anti: boolean;
+  tributes: GdTransfer[];
+}
+
+export interface GdResult {
+  /** Finishing order, first finisher (头游) first. */
+  order: number[];
+  winner_team: 0 | 1;
+  /** Levels gained by the winning team (1–3). */
+  upgrade: number;
+  /** Level played this hand. */
+  level: string;
+  team_levels_before: [string, string];
+  team_levels_after: [string, string];
+  level_team_next: 0 | 1;
+  a_attempts: [number, number];
+  match_winner: 0 | 1 | null;
+  scores: number[];
+}
+
+export interface GuandanPublicGame {
+  game_id: string;
+  room_id: string;
+  game: 'guandan';
+  phase: GdPhase;
+  players: Player[];
+  hand_no: number;
+  level: string;
+  level_team: 0 | 1;
+  team_levels: [string, string];
+  a_attempts: [number, number];
+  tribute: GdTributeInfo | null;
+  returns: GdTransfer[];
+  turn: number | null;
+  deadline: number | null;
+  remaining_ms: number | null;
+  to_beat: PlayRecord | null;
+  can_pass: boolean;
+  cards_left: number[];
+  /** Seats that are out, first finisher first (all four once finished). */
+  order: number[];
+  history: PlayRecord[];
+  result: GdResult | null;
+  seq: number;
+  turn_seq: number;
+}
+
+export interface GuandanPlayerGame extends GuandanPublicGame {
+  seat: number;
+  hand: Card[];
+  legal?: { phase: 'return' | 'playing'; return_cards?: Card[]; to_beat?: PlayRecord | null; can_pass?: boolean };
+}
+
+export interface GuandanReplay extends GuandanPublicGame {
+  seed: string;
+  /** Hands after the deal, before any tribute. */
+  initial_hands: Card[][];
+  events: WsEvent[];
+}
+
+export type AnyPublicGame = PublicGame | HoldemPublicGame | GuandanPublicGame;
+export type AnyReplay = Replay | HoldemReplay | GuandanReplay;
+
+export function isGuandanGame(g: object | null | undefined): boolean {
+  return !!g && (g as { game?: unknown }).game === 'guandan';
+}
 
 export function isHoldemGame(g: object | null | undefined): boolean {
   if (!g) return false;
@@ -215,8 +293,8 @@ export interface GameSummary {
   game?: GameType;
   players?: Player[];
   landlord?: number | null;
-  /** GameResult for ddz / ddz4, HoldemResult for holdem. */
-  result?: GameResult | HoldemResult | null;
+  /** GameResult for ddz / ddz4, HoldemResult for holdem, GdResult for guandan. */
+  result?: GameResult | HoldemResult | GdResult | null;
   phase?: Phase;
   started_at?: number | string;
   finished_at?: number | string;
@@ -300,6 +378,8 @@ const ERROR_TEXT: Record<string, string> = {
   BAD_ACTION: '当前不能这样操作',
   CANNOT_CHECK: '面对下注不能过牌',
   BAD_AMOUNT: '加注额不合法',
+  PATTERN_MISMATCH: '这些牌不能按所选牌型出',
+  BAD_RETURN: '只能还 2–10 的牌（不能还王和逢人配）',
 };
 
 /** Human-readable Chinese text for an error, keeping the server message for detail. */
@@ -369,14 +449,18 @@ export const api = {
     request<{ room: Room }>('POST', `/rooms/${encodeURIComponent(rid)}/ready`, { token, body: { ready } }),
 
   game: (gid: string) => request<PublicGame>('GET', `/games/${encodeURIComponent(gid)}`),
-  gameState: (token: string, gid: string) => request<PlayerGame | HoldemPlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
+  gameState: (token: string, gid: string) => request<PlayerGame | HoldemPlayerGame | GuandanPlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
   bid: (token: string, gid: string, score: number, seq?: number) =>
     request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/bid`, { token, body: { score, seq } }),
-  play: (token: string, gid: string, cards: Card[], seq?: number) =>
+  /** `pattern` (guandan only) picks one interpretation when the cards can be read several ways. */
+  play: (token: string, gid: string, cards: Card[], seq?: number, pattern?: { type: string; rank?: string }) =>
     request<{ ok: true; seq: number; pattern: ApiPattern | null }>('POST', `/games/${encodeURIComponent(gid)}/play`, {
       token,
-      body: { cards, seq },
+      body: { cards, seq, ...(pattern ? { pattern } : {}) },
     }),
+  /** Guandan: give one card back to the tribute payer (还贡). */
+  returnCard: (token: string, gid: string, card: Card, seq?: number) =>
+    request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/return`, { token, body: { card, seq } }),
   action: (token: string, gid: string, action: HoldemAction, amount?: number, seq?: number) =>
     request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/action`, {
       token,

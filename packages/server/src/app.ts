@@ -177,7 +177,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     const bot = auth(req);
     return liveRoomFor(req.params.gid).legalMoves(bot.id);
   });
-  for (const op of ['bid', 'play', 'action']) {
+  for (const op of ['bid', 'play', 'action', 'return']) {
     app.post<P>(`/api/v1/games/:gid/${op}`, async (req) => doAct(auth(req), req.params.gid, op, body(req)));
   }
   app.get<P>('/api/v1/games/:gid', async (req) => arena.publicGame(req.params.gid));
@@ -253,13 +253,14 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
         return sendJson(ws, { type: 'error', data: { code: 'BAD_REQUEST', message: 'invalid JSON' } });
       }
       if (msg.op === 'ping') return sendJson(ws, { type: 'pong', ts: Date.now() });
-      if (msg.op !== 'bid' && msg.op !== 'play' && msg.op !== 'action') return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid, play or action' } } });
+      const op = typeof msg.op === 'string' ? msg.op : '';
+      if (!['bid', 'play', 'action', 'return'].includes(op)) return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid, play, action or return' } } });
       let status = 200;
       let result: unknown;
       try {
         if (!limiter.take(bot.id)) throw new ApiError(429, 'RATE_LIMITED', 'too many requests');
         if (typeof msg.game_id !== 'string') throw badRequest('game_id is required');
-        result = doAct(bot, msg.game_id, msg.op, msg);
+        result = doAct(bot, msg.game_id, op, msg);
       } catch (e) {
         if (e instanceof ApiError || e instanceof GameError) {
           status = e.status;

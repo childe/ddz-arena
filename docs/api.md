@@ -2,7 +2,7 @@
 
 Base URL：`https://ddz.ohmycat.me`（下文路径都相对于它），WebSocket 地址把 `https` 换成 `wss`（即 `wss://ddz.ohmycat.me`）。域名经过 Cloudflare 代理；也可以用 `http://43.128.99.230` 直连服务器。所有请求和响应都是 JSON。
 
-接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛；第 8、9 节是四人斗地主和德州扑克。
+接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛；第 8、9、10 节是四人斗地主、德州扑克和掼蛋。
 
 | 资料 | 用途 |
 |---|---|
@@ -84,6 +84,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | `ddz` | 三人斗地主 | 3 | 本文第 1–7 节 |
 | `ddz4` | 四人斗地主 | 4 | 第 8 节 |
 | `holdem` | 德州扑克（无限注） | `config.seats`，2–6，默认 6 | 第 9 节 |
+| `guandan` | 掼蛋 | 4 | 第 10 节 |
 
 `quick-join` 只会进入同一游戏类型的房间。`POST /rooms` 只建房，不会让创建者入座，创建者需要再调用 `/join`。一个 bot 同一时间只能坐在一个房间。两局之间离开房间会立即释放座位，并取消自动开下一局。斗地主的所有座位都有人且都已准备时开局（德州扑克见第 9 节）。`config.auto_restart` 为 `true`（默认）时，一局结束 3 秒后自动开下一局，不需要再次准备；但一局结束时没有连着 WebSocket 的座位会被设为未准备，房间停下来等它，它重新连上 WebSocket 后自动恢复准备。对局中离开房间，你的座位进入托管直到本局结束。房间空置 10 分钟后自动关闭。
 
@@ -325,7 +326,7 @@ on_close():
 
 ## 7. 约一场比赛
 
-想让自己的 bot 和别人的 bot 同桌对局，流程是：建一个房间，把房间号发给对方，各自的 bot 进入这个房间，都准备好后自动开局。斗地主的座位必须坐满（三人版 3 家、四人版 4 家），人数不够时要自己再跑示例 bot 凑数；德州扑克 2 人以上就能开局。
+想让自己的 bot 和别人的 bot 同桌对局，流程是：建一个房间，把房间号发给对方，各自的 bot 进入这个房间，都准备好后自动开局。斗地主和掼蛋的座位必须坐满（三人斗地主 3 家，四人斗地主和掼蛋 4 家），人数不够时要自己再跑示例 bot 凑数；德州扑克 2 人以上就能开局。
 
 ### 7.1 建房间
 
@@ -499,3 +500,91 @@ WebSocket 同样可以发 `{"op":"action","req_id":"1","game_id":"g_x","action":
 ```
 
 规则引擎在 [`packages/engine/src/holdem/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/holdem)，其中 `evaluateHoldem` 是 7 选 5 的牌力评估，可以作为移植参考。
+
+## 10. 掼蛋（`game: "guandan"`）
+
+4 人两两组队的掼蛋，完整规则：级牌、逢人配、同花顺、进贡还贡与抗贡、按名次升级，一场打到过 A。房间、入座、准备、围观、回放、重连的机制和斗地主相同。没有叫分；出牌仍用 `/play`，另有还贡接口 `/return`。
+
+建房：`POST /rooms {"game":"guandan"}`；快速入座：`POST /rooms/quick-join {"game":"guandan"}`。4 个座位都有人且都已准备时开局。房间配置只有 `play_timeout_ms`（出牌和还贡共用，默认 20000）、`legal_moves_api` 和 `auto_restart`。一场比赛由同一房间里连续的多局组成，级数和进贡关系在局与局之间传递；服务端重启或房间关闭后从头开始。
+
+### 10.1 座位和牌
+
+- 座位 0、2 是 0 队，座位 1、3 是 1 队，对家是队友。出牌顺序 0→1→2→3→0，已出完的座位跳过。
+- 两副牌 108 张，每人 27 张，没有底牌。牌的编码与四人斗地主相同，同一张牌最多 2 张，出牌按多重集合处理。
+- **级牌**：本局的级数 `level` 是 `2`…`A` 中的一个点数。
+- **单张牌值**（单张、对子、三同张、三带二、炸弹比较时用）：`2 < 3 < … < K < A`，级牌点数被抽出来放在 A 之上，再往上是小王、大王。例：打 7 时 `… 6 < 8 < … < A < 7 < BJ < RJ`。
+- **顺序值**（顺子、木板、钢板、同花顺用）：自然顺序 `A 2 3 … K A`，级牌在自然位置，王不能参与。A 可以当最小（`A2345`）或最大（`TJQKA`），不能绕圈（`QKA23` 非法）。
+- **逢人配**：红桃级牌（打 7 时是 `7H`，共 2 张）可以当除大小王之外的任意一张牌用。只由逢人配组成的出牌就是级牌本身。
+
+### 10.2 牌型
+
+| `type` | 名称 | 构成 | `rank` |
+|---|---|---|---|
+| `single` | 单张 | 1 张 | 这张牌 |
+| `pair` | 对子 | 同点数 2 张；`BJ BJ`、`RJ RJ` 是对子，`BJ RJ` 不是 | 点数 |
+| `triple` | 三同张 | 同点数 3 张，王不能 | 点数 |
+| `triple_pair` | 三带二 | 三同张 + 一个不同点数的对子 | 三张的点数 |
+| `straight` | 顺子 | 恰好 5 张连续点数 | 最大一张（`A2345` 为 `"5"`） |
+| `pair_chain` | 木板 | 恰好 3 个连续对子 | 最大对子 |
+| `plane` | 钢板 | 恰好 2 个连续三张 | 较大的三张 |
+| `bomb` | 炸弹 | 同点数 4–8 张，`length` = 张数 | 点数 |
+| `straight_flush` | 同花顺 | 同花色的 5 张顺子 | 最大一张 |
+| `rocket` | 天王炸 | 4 张王，`length` = 4 | `"RJ"` |
+
+- 非炸弹牌型只能被同类型、更大的牌压。炸弹类从小到大：4 张炸弹 < 5 张炸弹 < 同花顺 < 6 张 < 7 张 < 8 张 < 天王炸，同类比 `rank`；炸弹类能压任何非炸弹牌型。
+- 逢人配可以补进任何牌型（包括炸弹和同花顺），但不能当王。炸弹最多 8 张。
+- 一组牌有多种解释时（例如含逢人配的顺子），可以在请求里带 `pattern: {"type", "rank"}` 指定。不带时，跟牌取能压过上家的解释中最小的一个；领出取优先级最高的：炸弹类（越大越优先）> 其他（`rank` 越大越优先，相同时按上表顺序）。指定的解释不成立时返回 422 `PATTERN_MISMATCH`。
+
+### 10.3 一局的流程
+
+1. 发牌，每人 27 张。
+2. **进贡**（一场的第一局没有）：按上一局的名次（`order`，头游在前）。单下时末游给头游进贡；双下（三游、末游同队）时两人都进贡，较大的贡牌给头游、较小的给二游，一样大时从头游下家方向先遇到的进贡者给头游。贡牌由服务端自动挑：手中牌值最大的一张，逢人配除外。**抗贡**：单下时末游有 2 张大王，或双下时两个进贡者合计有 2 张大王，则不进贡也不还贡。
+3. **还贡**：收贡者调用 `/return` 选一张自然点数 2–10 的牌还给进贡者（不能是王和逢人配；手里没有 2–10 时可以还逢人配以外的任意一张）。双下时头游先还。
+4. **首出**：第一局随机座位；之后进贡者先出（双下时是给头游进贡的那位）；抗贡时上一局的头游先出。
+5. **出牌**：和斗地主一样领出、压牌或过。按出完的先后记头游、二游、三游。**接风**：出完最后一张牌的人那一手没人压时，由他的队友领出。
+6. 一队两人都出完，或三人出完时，本局结束。
+
+### 10.4 升级和计分
+
+- 两队各有级数，开场都是 `2`。本局级数是「主打队」（上一局升级的队，第一局为 0 队）的级数。
+- 头游所在的队升级：队友二游升 3 级，三游升 2 级，末游升 1 级，最高到 A。升级的队成为下一局的主打队。
+- **过 A**：主打队在 A 级的一局拿到头游且队友不是末游，赢下这一场（`match_winner`），下一局两队都回到 `2`。主打队在 A 打 3 局都没过，退回 `2`。
+- `scores`（排行榜用）：头游队两人各 `+升级数`，另一队两人各 `-升级数`；过 A 的那局再各 ±3。四人之和为 0。
+
+### 10.5 接口
+
+| 方法 | 路径 / WS op | 请求体 | 返回 |
+|---|---|---|---|
+| POST | `/games/{gid}/play` / `play` | `{"cards":[...], "pattern"?:{"type","rank"?}, "seq"?}`，`cards: []` 为过 | `{"ok":true,"seq","pattern"}` |
+| POST | `/games/{gid}/return` / `return` | `{"card":"5S", "seq"?}` | `{"ok":true,"seq"}` |
+| GET | `/games/{gid}/legal-moves` | — | 出牌时 `{"moves":[{"cards","pattern"}],"can_pass"}`；还贡时 `{"return_cards":[...]}` |
+
+超时代打：还贡还最小的一张可还牌；出牌时能过就过，领出时出牌值最小的单张。
+
+### 10.6 事件
+
+| `type` | `data` |
+|---|---|
+| `game.started` | `{"game":"guandan","players","hand_no","level":"7","level_team":1,"team_levels":["2","7"],"a_attempts":[0,0],"cards_left":[27,27,27,27]}`，只发给你的还有 `hand`（进贡前的 27 张） |
+| `tribute` | `{"anti":false,"tributes":[{"from":3,"to":0,"card":"RJ"}]}`，抗贡时 `{"anti":true,"tributes":[]}`；紧跟 `game.started`，贡牌此时已经转到收贡者手里 |
+| `turn` | `{"seat","phase":"return"\|"playing","to_beat","can_pass"}` |
+| `returned` | `{"from":0,"to":3,"card":"5S","auto"}` |
+| `played` / `passed` | `{"seat","cards","pattern","cards_left","auto"}` / `{"seat","auto"}` |
+| `player.out` | `{"seat","place"}`，place 为 1–3 |
+| `game.finished` | `{"result":{"order":[2,0,1,3],"winner_team":0,"upgrade":3,"level":"7","team_levels_before":["5","7"],"team_levels_after":["8","7"],"level_team_next":0,"a_attempts":[0,0],"match_winner":null,"scores":[3,-3,3,-3]},"hands","seed"}` |
+
+### 10.7 视图
+
+`PublicGame` 的掼蛋字段：`phase`（`return` / `playing` / `finished`）、`hand_no`、`level`、`level_team`、`team_levels`、`a_attempts`、`tribute`（第一局为 `null`）、`returns`、`turn`、`to_beat`、`can_pass`、`cards_left`、`order`（已出完的座位，结束后是完整名次）、`history`、`result`。`PlayerGame` 再加 `seat`、`hand`（当前手牌，已含贡牌和还贡的变化），轮到你时还有 `legal`：还贡阶段 `{"phase":"return","return_cards"}`，出牌阶段 `{"phase":"playing","to_beat","can_pass"}`。回放有 `initial_hands`（进贡前）和 `seed`。
+
+### 10.8 bot 主循环
+
+```
+收到 tribute：把贡牌从进贡者手里移到收贡者手里（自己是其中一方时更新手牌）
+收到 turn 且 data.seat == 我的座位:
+    data.phase == "return": 选一张可还的牌，POST /games/{gid}/return {"card":..., "seq":...}
+    data.phase == "playing": 选牌，POST /games/{gid}/play {"cards":[...], "seq":...}；能过时 cards 可以为 []
+收到 returned：还贡的牌从收贡者手里移到进贡者手里
+```
+
+规则引擎在 [`packages/engine/src/guandan/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/guandan)，判定以它为准；`legalMovesGd` 能枚举含逢人配的所有合法出牌，可以作为移植参考。完整规则说明见 [`docs/guandan.md`](https://github.com/childe/ddz-arena/blob/main/docs/guandan.md)。

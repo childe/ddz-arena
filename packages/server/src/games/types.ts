@@ -1,7 +1,7 @@
 // A game type plugs into the generic Room through these interfaces. The Room owns seating, readiness,
 // turn timers, trustee mode, the event buffer and persistence; a GameSession owns the rules of one deal.
 
-export type GameType = 'ddz' | 'ddz4' | 'holdem';
+export type GameType = 'ddz' | 'ddz4' | 'holdem' | 'guandan';
 
 /** An event the session wants emitted. `priv` is merged into `data` only for the player in that seat. */
 export interface Emit {

@@ -1,5 +1,5 @@
 // Endless demo tables: one room per game type ("三机演示" for 3-player Dou Dizhu, "四人斗地主演示",
-// "德州扑克演示") where bots play forever, pausing before each action so humans can follow along in
+// "德州扑克演示", "掼蛋演示") where bots play forever, pausing before each action so humans can follow along in
 // the web UI. Runs next to the server (deploy/ddz-demo.service).
 //
 //   DDZ_DEMO_BASE=http://127.0.0.1:8080 DDZ_INVITE_CODE=... node deploy/demo.mjs   (defaults to 127.0.0.1:$PORT)
@@ -8,7 +8,7 @@
 // A supervisor loop recreates rooms after a server restart (rooms live in memory).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { evaluateHoldem } from '@ddz/engine';
+import { cardValue, evaluateHoldem, isBombLike, isWildcard, strength } from '@ddz/engine';
 
 const BASE = (process.env.DDZ_DEMO_BASE ?? `http://127.0.0.1:${process.env.PORT ?? 8080}`).replace(/\/$/, '');
 const INVITE = process.env.DDZ_INVITE_CODE;
@@ -31,6 +31,13 @@ const TABLES = [
     bots: [
       { name: '德州-紧凶A', style: 'tight' }, { name: '德州-紧凶B', style: 'tight' },
       { name: '德州-松浪C', style: 'loose' }, { name: '德州-随机D', style: 'random' },
+    ],
+  },
+  {
+    key: 'guandan', game: 'guandan', room: '掼蛋演示',
+    bots: [
+      { name: '掼蛋-贪心A', style: 'greedy' }, { name: '掼蛋-贪心B', style: 'greedy' },
+      { name: '掼蛋-贪心C', style: 'greedy' }, { name: '掼蛋-随机D', style: 'random' },
     ],
   },
 ];
@@ -133,6 +140,29 @@ function chooseMove(style, st, moves) {
   return moves[0].cards;
 }
 
+// ---------- Guandan strategy ----------
+
+function guandanMove(style, st, moves) {
+  if (!moves.length) return [];
+  if (style === 'random') {
+    if (st.can_pass && Math.random() < 0.3) return [];
+    return moves[Math.floor(Math.random() * moves.length)].cards;
+  }
+  // Greedy: never beat the partner; play the weakest move, keeping bombs and the wildcard for later.
+  if (st.can_pass && st.to_beat?.seat === (st.seat + 2) % 4) return [];
+  const wild = (m) => m.cards.filter((c) => isWildcard(c, st.level)).length;
+  const bomb = (m) => (isBombLike(m.pattern) ? 1 : 0);
+  moves.sort((a, b) => bomb(a) - bomb(b) || wild(a) - wild(b) || strength(a.pattern, st.level) - strength(b.pattern, st.level) || b.cards.length - a.cards.length);
+  // Only bomb when an opponent is close to going out.
+  const oppMin = Math.min(...[1, 3].map((d) => st.cards_left[(st.seat + d) % 4]).filter((n) => n > 0));
+  if (bomb(moves[0]) && st.can_pass && oppMin > 6) return [];
+  return moves[0].cards;
+}
+
+function guandanReturn(st, cards) {
+  return [...cards].sort((a, b) => cardValue(a, st.level) - cardValue(b, st.level))[0];
+}
+
 // ---------- Hold'em strategy ----------
 
 const HOLDEM_RANKS = '23456789TJQKA';
@@ -206,7 +236,8 @@ class DemoBot {
     if (ev.type === 'game.finished' && this === this.table.bots[0]) {
       const r = ev.data.result;
       const scores = Array.isArray(r.scores) ? r.scores.map((x) => x ?? '-').join(',') : '';
-      log(`${this.table.key} ${ev.game_id}: ${r.kind ?? r.showdown?.[0]?.rank ?? 'fold'} scores=${scores}`);
+      const what = r.kind ?? (r.winner_team !== undefined ? `team${r.winner_team}+${r.upgrade}@${r.level}` : (r.showdown?.[0]?.rank ?? 'fold'));
+      log(`${this.table.key} ${ev.game_id}: ${what} scores=${scores}`);
     }
   }
 
@@ -234,7 +265,14 @@ class DemoBot {
     const st = (await api('GET', `/games/${gid}/state`, this.token)).data;
     if (!st || st.turn !== this.seat) return;
     let r;
-    if (st.game === 'holdem') {
+    if (st.game === 'guandan') {
+      const legal = (await api('GET', `/games/${gid}/legal-moves`, this.token)).data;
+      if (st.phase === 'return') {
+        r = await api('POST', `/games/${gid}/return`, this.token, { card: guandanReturn(st, legal.return_cards ?? []), seq: st.seq });
+      } else if (st.phase === 'playing') {
+        r = await api('POST', `/games/${gid}/play`, this.token, { cards: guandanMove(this.style, st, legal.moves ?? []), seq: st.seq });
+      }
+    } else if (st.game === 'holdem') {
       if (!st.legal) return;
       r = await api('POST', `/games/${gid}/action`, this.token, { ...holdemAction(this.style, st), seq: st.seq });
     } else if (st.phase === 'bidding') {

@@ -179,3 +179,29 @@ def test_holdem_action(base):
     assert Handler.log[-1][3] == {"action": "fold"}
     c.action("g_9", "call", seq=7)
     assert Handler.log[-1][3] == {"action": "call", "seq": 7}
+
+
+def test_guandan_requests(base):
+    c = Client(base, "tok")
+    assert c.return_card("g_5", "5S", seq=11) == {"ok": True, "seq": 1}
+    assert Handler.log[-1][1:] == (
+        "/api/v1/games/g_5/return",
+        "Bearer tok",
+        {"card": "5S", "seq": 11},
+    )
+    cards = ["3S", "4S", "5S", "6S", "7H"]
+    with pytest.raises(ApiError):
+        c.play("g_5", cards, "straight", seq=3, pattern_rank="6")
+    assert Handler.log[-1][3] == {
+        "cards": cards,
+        "pattern": {"type": "straight", "rank": "6"},
+        "seq": 3,
+    }
+    c.create_room("gd", None, game="guandan")
+    assert Handler.log[-1][3] == {"name": "gd", "game": "guandan"}
+    c.quick_join(game="guandan")
+    assert Handler.log[-1][3] == {"game": "guandan"}
+    c.leaderboard(game="guandan")
+    assert Handler.log[-1][1] == "/api/v1/leaderboard?game=guandan"
+    c.list_games(limit=2, game="guandan")
+    assert Handler.log[-1][1] == "/api/v1/games?limit=2&game=guandan"

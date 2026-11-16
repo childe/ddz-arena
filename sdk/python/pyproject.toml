@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ddz-sdk"
-version = "0.2.0"
-description = "Python SDK for the Dou Dizhu (斗地主, 3/4 players) and Texas Hold'em bot competition platform"
+version = "0.3.0"
+description = "Python SDK for the Dou Dizhu (斗地主, 3/4 players), Guandan (掼蛋) and Texas Hold'em bot competition platform"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = ["websocket-client>=1.6"]

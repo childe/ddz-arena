@@ -13,6 +13,7 @@ import {
 } from '@ddz/engine';
 import { type Card, type HoldemAction, type Room, type WsEvent, ApiError, GAME_LABELS, api, errorText } from '../api.ts';
 import { cardKeys, cardsByKeys, keysForCards, patternName } from '../components/Card.tsx';
+import { GuandanControls, GuandanHistory, GuandanTable, gdEnabled, gdToggle } from '../components/GuandanTable.tsx';
 import { GuestForm } from '../components/Guest.tsx';
 import { History } from '../components/History.tsx';
 import { HoldemControls, HoldemHistory, HoldemTable, holdemSeats } from '../components/HoldemTable.tsx';
@@ -20,7 +21,7 @@ import { Table, tableSeats } from '../components/Table.tsx';
 import { toast } from '../components/Toast.tsx';
 import { useGuest } from '../guest.ts';
 import { href } from '../router.ts';
-import { type OwnView, type TableState, applyEvent, emptyTable, tableFromSnapshot } from '../state.ts';
+import { type OwnView, type TableState, applyEvent, currentGameId, emptyTable, tableFromSnapshot } from '../state.ts';
 import { LiveSocket, type SocketStatus } from '../ws.ts';
 import { GameList } from './Lobby.tsx';
 
@@ -34,7 +35,7 @@ function reducer(s: TableState, a: Action): TableState {
   switch (a.t) {
     case 'snap':
       // Events that raced ahead of a slow snapshot for the same game win; take the newer room only.
-      if (s.game && a.state.game && s.game.game_id === a.state.game.game_id && s.seq > a.state.seq) {
+      if (currentGameId(s) && currentGameId(s) === currentGameId(a.state) && s.seq > a.state.seq) {
         return { ...s, room: a.state.room ?? s.room };
       }
       return { ...a.state, viewer: s.viewer };
@@ -146,10 +147,12 @@ export function RoomPage({ rid }: { rid: string }) {
 
   const isHoldem = state.gameType === 'holdem';
   const isDdz4 = state.gameType === 'ddz4';
+  const isGd = state.gameType === 'guandan';
   const g = state.game;
   const hg = state.holdem;
+  const gd = state.guandan;
   const room = state.room;
-  const myHand = mySeat !== null ? (g?.hands[mySeat] ?? null) : null;
+  const myHand = mySeat !== null ? ((isGd ? gd?.hands[mySeat] : g?.hands[mySeat]) ?? null) : null;
   const myTurn = !!g && mySeat !== null && g.turn === mySeat && g.phase !== 'finished';
   const handKey = myHand?.join(',') ?? '';
 
@@ -165,10 +168,10 @@ export function RoomPage({ rid }: { rid: string }) {
   useEffect(() => {
     hintIdx.current = 0;
   }, [g?.turn_seq, g?.game_id]);
-  // A new deal or a finished game clears the selection.
+  // A new deal, a finished game or the end of the guandan return phase clears the selection.
   useEffect(() => {
     setSelected((sel) => (sel.size ? new Set() : sel));
-  }, [g?.game_id, g?.phase === 'finished']);
+  }, [g?.game_id, g?.phase === 'finished', gd?.game_id, gd?.phase]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -189,7 +192,9 @@ export function RoomPage({ rid }: { rid: string }) {
   const leave = () => {
     const inGame = isHoldem
       ? !!hg && hg.phase !== 'finished' && mySeat !== null && hg.stacks[mySeat] !== null && hg.stacks[mySeat] !== undefined
-      : !!g && g.phase !== 'finished';
+      : isGd
+        ? !!gd && gd.phase !== 'finished'
+        : !!g && g.phase !== 'finished';
     if (inGame && !confirm('对局中离开，你的座位会托管到本局结束。确定离开？')) return;
     return run(async () => {
       await api.leave(token!, rid);
@@ -206,6 +211,16 @@ export function RoomPage({ rid }: { rid: string }) {
   const play = (cards: Card[]) =>
     run(async () => {
       await api.play(token!, g!.game_id, cards, seqArg());
+      setSelected(new Set());
+    });
+  const playGd = (cards: Card[], pattern?: { type: string; rank: string }) =>
+    run(async () => {
+      await api.play(token!, gd!.game_id, cards, seqArg(), cards.length ? pattern : undefined);
+      setSelected(new Set());
+    });
+  const returnGd = (card: Card) =>
+    run(async () => {
+      await api.returnCard(token!, gd!.game_id, card, seqArg());
       setSelected(new Set());
     });
   const act = (action: HoldemAction, amount?: number) => run(() => api.action(token!, hg!.game_id, action, amount, seqArg()));
@@ -274,7 +289,7 @@ export function RoomPage({ rid }: { rid: string }) {
   }
 
   const mySeatInfo = mySeat !== null ? room?.seats[mySeat] : null;
-  const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : !!g && g.phase !== 'finished';
+  const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : isGd ? !!gd && gd.phase !== 'finished' : !!g && g.phase !== 'finished';
   const readyControls = (
     <div className="controls">
       {mySeatInfo?.ready ? (
@@ -293,7 +308,34 @@ export function RoomPage({ rid }: { rid: string }) {
   );
 
   let controls = null;
-  if (playerMode && isHoldem) {
+  if (playerMode && isGd) {
+    const inHand = !!gd && mySeat !== null && gd.players.some((p) => p.seat === mySeat && p.bot_id === guest?.bot_id);
+    if (gd && gameRunning && inHand) {
+      controls = (
+        <GuandanControls
+          state={state}
+          mySeat={mySeat!}
+          selected={selected}
+          setSelected={setSelected}
+          busy={busy}
+          onPlay={playGd}
+          onReturn={returnGd}
+          onLeave={leave}
+        />
+      );
+    } else if (!gameRunning) {
+      controls = readyControls;
+    } else {
+      controls = (
+        <div className="controls controls-waiting">
+          <span className="muted">本局进行中，你从下一局开始参加</span>
+          <button className="btn btn-small" disabled={busy} onClick={leave}>
+            离开
+          </button>
+        </div>
+      );
+    }
+  } else if (playerMode && isHoldem) {
     const inHand = !!hg && mySeat !== null && hg.stacks[mySeat] !== null && hg.stacks[mySeat] !== undefined;
     if (hg && inHand && gameRunning && hg.turn === mySeat && hg.legal) {
       controls = (
@@ -382,7 +424,8 @@ export function RoomPage({ rid }: { rid: string }) {
       ? `等待玩家入座（${filled}/${seatTotal}）`
       : `等待准备（${readyCount}/${seatTotal}）`;
   const hasEmpty = room ? room.seats.some((s) => !s) : false;
-  const finishedGid = isHoldem ? (hg?.phase === 'finished' ? hg.game_id : null) : g?.phase === 'finished' ? g.game_id : null;
+  const finishedView = isHoldem ? hg : isGd ? gd : g;
+  const finishedGid = finishedView?.phase === 'finished' ? finishedView.game_id : null;
   const resultFooter = finishedGid ? (
     <a className="btn btn-small" href={href.replay(finishedGid)}>
       查看回放
@@ -424,6 +467,21 @@ export function RoomPage({ rid }: { rid: string }) {
             idleText={idleText}
             resultFooter={resultFooter}
           />
+        ) : isGd ? (
+          <GuandanTable
+            state={state}
+            viewSeat={mySeat ?? 0}
+            reveal={false}
+            showTimers
+            mySeat={mySeat}
+            selected={selected}
+            onToggle={gd && mySeat !== null ? gdToggle(gd, setSelected) : undefined}
+            enabled={gd && mySeat !== null ? gdEnabled(gd, mySeat) : undefined}
+            seatExtra={seatExtra}
+            controls={controls}
+            idleText={idleText}
+            resultFooter={resultFooter}
+          />
         ) : (
         <Table
           state={state}
@@ -441,7 +499,7 @@ export function RoomPage({ rid }: { rid: string }) {
         )}
         <aside className="room-side">
           <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
-          {isHoldem ? <HoldemHistory state={state} /> : <History state={state} />}
+          {isHoldem ? <HoldemHistory state={state} /> : isGd ? <GuandanHistory state={state} /> : <History state={state} />}
           <h3 className="room-games-title">本房间对局</h3>
           <GameList key={rid} limit={10} roomId={rid} />
         </aside>

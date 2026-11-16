@@ -1343,7 +1343,15 @@ select {
   background: #e3f2fd;
   color: #0b5394;
 }
+.game-guandan {
+  background: #fdecef;
+  color: #a61e4d;
+}
 @media (prefers-color-scheme: dark) {
+  .game-guandan {
+    background: #3b1424;
+    color: #faa2c1;
+  }
   .game-ddz {
     background: #3a2012;
     color: #ffb38a;
@@ -1864,5 +1872,236 @@ select {
   .controls .btn {
     min-width: 56px;
     padding: 6px 10px;
+  }
+}
+
+/* ---------- guandan ---------- */
+
+:root {
+  --gd-team0: #4dabf7;
+  --gd-team1: #ff8787;
+  --gd-gold: #fcc419;
+}
+.gd-seat-team0 {
+  box-shadow: inset 3px 0 0 var(--gd-team0);
+}
+.gd-seat-team1 {
+  box-shadow: inset 3px 0 0 var(--gd-team1);
+}
+.gd-seat-team0.on-turn {
+  box-shadow: inset 3px 0 0 var(--gd-team0), 0 0 12px rgba(255, 212, 59, 0.35);
+}
+.gd-seat-team1.on-turn {
+  box-shadow: inset 3px 0 0 var(--gd-team1), 0 0 12px rgba(255, 212, 59, 0.35);
+}
+.gd-seat-team0 .gd-avatar {
+  background: rgba(77, 171, 247, 0.35);
+}
+.gd-seat-team1 .gd-avatar {
+  background: rgba(255, 135, 135, 0.35);
+}
+/* Long names in the narrow side seats end in an ellipsis instead of spilling out. */
+.gd-table .seat-side .seat-head,
+.gd-table .seat-side .seat-meta {
+  width: 100%;
+  min-width: 0;
+}
+.gd-table .seat-side .seat-name {
+  max-width: 100%;
+}
+.gd-seat.gd-out .seat-name {
+  opacity: 0.8;
+}
+.table .badge-team0,
+.result-panel .badge-team0 {
+  background: var(--gd-team0);
+  color: #04213a;
+}
+.table .badge-team1,
+.result-panel .badge-team1 {
+  background: var(--gd-team1);
+  color: #3a0808;
+}
+.table .badge-partner {
+  background: rgba(255, 255, 255, 0.85);
+  color: #1d2330;
+}
+.badge.gd-place,
+.table .badge.gd-place {
+  background: #e9ecef;
+  color: #343a40;
+  font-weight: 700;
+}
+.badge.gd-place-1,
+.table .badge.gd-place-1,
+.bubble.gd-place-1 {
+  background: var(--gd-gold);
+  color: #2b1700;
+}
+.badge.gd-place-2,
+.table .badge.gd-place-2 {
+  background: #dee2e6;
+  color: #212529;
+}
+.bubble.gd-place {
+  font-weight: 700;
+}
+.gd-team-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 3px;
+  vertical-align: 0;
+}
+.gd-team-dot.gd-team0 {
+  background: var(--gd-team0);
+}
+.gd-team-dot.gd-team1 {
+  background: var(--gd-team1);
+}
+.chip.gd-level-chip {
+  font-weight: 700;
+}
+.chip.gd-level-chip.gd-team0 {
+  background: rgba(77, 171, 247, 0.4);
+}
+.chip.gd-level-chip.gd-team1 {
+  background: rgba(255, 135, 135, 0.4);
+}
+.chip.chip-warn {
+  background: #e8590c;
+  color: #fff;
+}
+.gd-wild-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.gd-wild-chip .card {
+  --w: 16px;
+  --h: 22px;
+  width: 16px;
+  height: 22px;
+}
+.gd-wild-chip .card .wild-tag {
+  display: none;
+}
+
+/* Wildcard (逢人配): gold frame plus a 配 tag in the lower left. */
+.card.card-wild {
+  border-color: var(--gd-gold);
+  box-shadow: inset 0 0 0 2px var(--gd-gold), -1px 1px 3px rgba(0, 0, 0, 0.25);
+  background: #fff9db;
+}
+.card.card-wild.selected {
+  box-shadow: inset 0 0 0 2px var(--gd-gold), 0 0 0 2px #ffd43b, -1px 1px 3px rgba(0, 0, 0, 0.3);
+}
+.wild-tag {
+  position: absolute;
+  left: calc(var(--w) * 0.06);
+  bottom: calc(var(--w) * 0.06);
+  font-size: max(9px, calc(var(--w) * 0.22));
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: #e67700;
+  color: #fff;
+  font-weight: 700;
+}
+.card-xs .wild-tag {
+  font-size: 8px;
+  padding: 0 1px;
+}
+.card.card-disabled {
+  filter: grayscale(0.6) brightness(0.62);
+  cursor: not-allowed;
+}
+
+.gd-info {
+  gap: 6px;
+}
+/* The partner's play needs the full width, or its fan collapses to one card. */
+.gd-table .center-plays-top > .play-slot {
+  flex: 1;
+}
+.gd-tribute {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  font-size: 12px;
+  max-width: 100%;
+}
+.gd-xfer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 2px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25);
+  min-width: 0;
+  max-width: 100%;
+}
+.gd-xfer.gd-anti,
+.gd-xfer.muted {
+  padding: 2px 8px;
+}
+.gd-xfer .card {
+  flex-shrink: 0;
+}
+.gd-xfer-kind {
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #e8590c;
+  color: #fff;
+  font-weight: 600;
+}
+.gd-xfer-kind.gd-ret {
+  background: #1c7ed6;
+}
+.gd-controls {
+  row-gap: 6px;
+}
+.gd-choices {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+.controls .btn.gd-choice {
+  min-width: 0;
+}
+.preview.gd-bad {
+  background: rgba(201, 42, 42, 0.75);
+}
+.gd-result h3 {
+  font-size: 17px;
+}
+.gd-result .result-table td:first-child {
+  white-space: nowrap;
+}
+.gd-log-xfers {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.gd-log-finish {
+  display: flex;
+  flex-direction: column;
+}
+.log-row .card-xs {
+  display: inline-block;
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .gd-table .seat-top .seat-hand {
+    width: auto;
+  }
+  .gd-xfer {
+    font-size: 11px;
   }
 }

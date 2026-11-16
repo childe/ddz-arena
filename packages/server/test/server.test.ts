@@ -353,6 +353,71 @@ describe('game types', () => {
   }, 30000);
 });
 
+describe('Guandan', () => {
+  /** Drive one hand through the API: returns first, then lead the first legal move or pass. */
+  async function playHand(bots: { token: string }[], gid: string) {
+    for (let steps = 0; ; steps++) {
+      const s = (await api('GET', `/api/v1/games/${gid}`)).body;
+      if (s.phase === 'finished') return s;
+      const bot = bots[s.turn]!;
+      const legal = (await api('GET', `/api/v1/games/${gid}/legal-moves`, bot.token)).body;
+      const r =
+        s.phase === 'return'
+          ? await api('POST', `/api/v1/games/${gid}/return`, bot.token, { card: legal.return_cards[0] })
+          : await api('POST', `/api/v1/games/${gid}/play`, bot.token, { cards: s.can_pass ? [] : legal.moves[0].cards });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      if (steps > 600) throw new Error('too many steps');
+    }
+  }
+
+  it('plays hands with levels, tribute and returns', async () => {
+    const { bots, listeners, spec, gid } = await startTable('guandan', 4);
+    const started = await Promise.all(listeners.map((l) => l.wait((e) => e.type === 'game.started')));
+    started.forEach((e) => expect(e.data.hand).toHaveLength(27));
+    const s0 = spec.events.find((e) => e.type === 'game.started')!.data;
+    expect(s0.hand).toBeUndefined();
+    expect(s0).toMatchObject({ game: 'guandan', hand_no: 1, level: '2', level_team: 0, team_levels: ['2', '2'] });
+    expect((await api('POST', `/api/v1/games/${gid}/bid`, bots[0]!.token, { score: 1 })).status).toBe(400);
+    const v = (await api('GET', `/api/v1/games/${gid}`)).body;
+    expect(v.phase).toBe('playing');
+    expect(v.tribute).toBeNull();
+    // Leading with a pass is rejected; a bad hint is a 422.
+    const leader = bots[v.turn]!;
+    expect((await api('POST', `/api/v1/games/${gid}/play`, leader.token, { cards: [] })).status).toBe(422);
+    const fin1 = await playHand(bots, gid);
+    expect(fin1.result.order).toHaveLength(4);
+    expect(fin1.result.scores.reduce((a: number, b: number) => a + b, 0)).toBe(0);
+    const outs = spec.events.filter((e) => e.type === 'player.out' && e.game_id === gid);
+    expect(outs.length).toBeGreaterThanOrEqual(2);
+    expect(outs[0]!.data).toEqual({ seat: fin1.result.order[0], place: 1 });
+
+    // Second hand: the winning team's level, and a tribute (or anti-tribute) right after game.started.
+    const started2 = await spec.wait((e) => e.type === 'game.started' && e.game_id !== gid, 10000);
+    const gid2 = started2.game_id;
+    expect(started2.data).toMatchObject({ hand_no: 2, level_team: fin1.result.winner_team, team_levels: fin1.result.team_levels_after });
+    const trib = await spec.wait((e) => e.type === 'tribute' && e.game_id === gid2);
+    const v2 = (await api('GET', `/api/v1/games/${gid2}`)).body;
+    if (trib.data.anti) expect(v2.phase).toBe('playing');
+    else {
+      expect(trib.data.tributes.length).toBeGreaterThan(0);
+      expect(v2.phase).toBe('return');
+      const receiver = bots[v2.turn]!;
+      const st = (await api('GET', `/api/v1/games/${gid2}/state`, receiver.token)).body;
+      expect(st.hand).toHaveLength(28);
+      expect(st.legal.phase).toBe('return');
+      expect((await api('POST', `/api/v1/games/${gid2}/return`, receiver.token, { card: 'RJ' })).status).toBe(422);
+    }
+    const fin2 = await playHand(bots, gid2);
+    expect(fin2.result.scores.reduce((a: number, b: number) => a + b, 0)).toBe(0);
+    if (!trib.data.anti) expect(spec.events.some((e) => e.type === 'returned' && e.game_id === gid2)).toBe(true);
+    const lb = (await api('GET', '/api/v1/leaderboard?game=guandan')).body;
+    expect(lb.bots.find((b: any) => b.bot_id === bots[0]!.bot_id).games).toBe(2);
+    const rep = (await api('GET', `/api/v1/games/${gid2}/replay`)).body;
+    expect(rep.initial_hands).toHaveLength(4);
+    [...listeners, spec].forEach((l) => l.close());
+  }, 60000);
+});
+
 describe("Texas Hold'em", () => {
   it('plays hands with private hole cards, a moving button and validation', async () => {
     const bots = [await makeBot(), await makeBot(), await makeBot()];

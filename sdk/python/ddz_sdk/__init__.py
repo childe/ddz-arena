@@ -1,5 +1,5 @@
-"""Python SDK for the card-game bot platform: Dou Dizhu (斗地主, 3 or 4 players) and
-No-Limit Texas Hold'em.
+"""Python SDK for the card-game bot platform: Dou Dizhu (斗地主, 3 or 4 players), Guandan
+(掼蛋) and No-Limit Texas Hold'em.
 
 Dou Dizhu (``ddz`` / ``ddz4``)::
 
@@ -16,6 +16,22 @@ Dou Dizhu (``ddz`` / ``ddz4``)::
     MyBot().run("http://localhost:8080", token)                # quick-join a ddz room
     MyBot().run("http://localhost:8080", token, game="ddz4")   # quick-join a ddz4 room
 
+Guandan (``guandan``)::
+
+    from ddz_sdk import GuandanBot, GuandanState
+
+    class MyGuandanBot(GuandanBot):
+        def on_return(self, state: GuandanState) -> str:
+            return state.returnable_cards()[0]  # smallest card you may give back
+
+        def on_play(self, state: GuandanState):
+            if state.to_beat and state.is_teammate(state.to_beat["seat"]):
+                return []                     # let the teammate's play stand
+            moves = state.legal_moves()       # rules_gd: level, wildcards, straight flushes
+            return min(moves, key=lambda m: m.pattern.main) if moves else []
+
+    MyGuandanBot().run("http://localhost:8080", token)        # quick-join a guandan room
+
 Texas Hold'em (``holdem``)::
 
     from ddz_sdk import Action, HoldemBot, HoldemState
@@ -29,10 +45,12 @@ Texas Hold'em (``holdem``)::
 
 from .bot import Bot, GameState
 from .client import ApiError, Client, register_bot
+from .guandan_bot import GuandanBot, GuandanState
 from .holdem import evaluate
 from .holdem_bot import Action, HoldemBot, HoldemState
 from .rules import Move, Pattern, RuleError, beats, identify, legal_moves, resolve
 from .rules4 import beats4, identify4, legal_moves4, resolve4
+from .rules_gd import GdPattern, beats_gd, identify_gd, legal_moves_gd, resolve_gd
 
 __all__ = [
     "Action",
@@ -40,6 +58,9 @@ __all__ = [
     "Bot",
     "Client",
     "GameState",
+    "GdPattern",
+    "GuandanBot",
+    "GuandanState",
     "HoldemBot",
     "HoldemState",
     "Move",
@@ -47,13 +68,17 @@ __all__ = [
     "RuleError",
     "beats",
     "beats4",
+    "beats_gd",
     "evaluate",
     "identify",
     "identify4",
+    "identify_gd",
     "legal_moves",
     "legal_moves4",
+    "legal_moves_gd",
     "register_bot",
     "resolve",
     "resolve4",
+    "resolve_gd",
 ]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

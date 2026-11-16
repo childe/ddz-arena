@@ -3,18 +3,21 @@
 Usage:
     python examples/run_table.py --base http://localhost:8080 --game ddz    --games 5
     python examples/run_table.py --base http://localhost:8080 --game ddz4   --games 3
+    python examples/run_table.py --base http://localhost:8080 --game guandan --games 5
     python examples/run_table.py --base http://localhost:8080 --game holdem --players 6 --games 20
     options: [--invite CODE] [--bots greedy,random,...] [--timeout-ms 20000] [--chaos 2]
              [--strict] [-v]
 
-``--players`` defaults to the table size (ddz 3, ddz4 4, holdem 6; holdem allows 2-6).
-``--bots`` lists strategies, cycled over the seats: ddz/ddz4 ``greedy`` / ``random``
-(default ``greedy,greedy,random``), holdem ``simple`` / ``random`` (default ``simple``).
+``--players`` defaults to the table size (ddz 3, ddz4 4, guandan 4, holdem 6; holdem allows
+2-6). ``--bots`` lists strategies, cycled over the seats: ddz/ddz4 ``greedy`` / ``random``
+(default ``greedy,greedy,random``), guandan ``greedy`` / ``random`` (default ``greedy,random``:
+team 0 greedy, team 1 random), holdem ``simple`` / ``random`` (default ``simple``).
 
 All bots are seated before anybody readies, so the first game starts with the full table.
 Prints one line per finished game, then per-bot SDK stats, the room scores and the leaderboard
 rows of these bots. At every game end each bot's tracked state is compared with what the server
-reveals (Dou Dizhu: remaining hand; Hold'em: own showdown score via ddz_sdk.holdem.evaluate).
+reveals (Dou Dizhu: remaining hand; Guandan: hand in GET /games/{gid}/state; Hold'em: own
+showdown score via ddz_sdk.holdem.evaluate). Every Guandan hand of a match counts as one game.
 Exit code is non-zero if a bot stalled or crashed; with ``--strict`` also if any bot used a
 fallback, hit a handler error, the server acted for it (``auto``) or a state check failed.
 """
@@ -33,20 +36,30 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 
-from ddz_sdk import Client, HoldemState, evaluate, register_bot  # noqa: E402
+from ddz_sdk import (  # noqa: E402
+    ApiError,
+    Client,
+    GuandanState,
+    HoldemState,
+    evaluate,
+    register_bot,
+)
 from ddz_sdk.cards import sort_cards  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
+from guandan_bot import GreedyGuandanBot, RandomGuandanBot  # noqa: E402
 from holdem_bot import RandomHoldemBot, SimpleHoldemBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
 
 KINDS = {
     "ddz": {"greedy": GreedyBot, "random": RandomBot},
     "holdem": {"simple": SimpleHoldemBot, "random": RandomHoldemBot},
+    "guandan": {"greedy": GreedyGuandanBot, "random": RandomGuandanBot},
 }
 KINDS["ddz4"] = KINDS["ddz"]
 DEFAULT_BOTS = {"ddz": "greedy,greedy,random", "ddz4": "greedy,greedy,random"}
 DEFAULT_BOTS["holdem"] = "simple"
-TABLE = {"ddz": 3, "ddz4": 4}
+DEFAULT_BOTS["guandan"] = "greedy,random"
+TABLE = {"ddz": 3, "ddz4": 4, "guandan": 4}
 
 
 class Reporter:
@@ -75,6 +88,22 @@ class Reporter:
                     r.get("pot"),
                     r.get("scores"),
                     shown,
+                )
+            elif self.game == "guandan":
+                line = (
+                    "hand %3d: level=%-2s order=%s winner_team=%s upgrade=%s levels=%s->%s "
+                    "match_winner=%s scores=%s"
+                    % (
+                        n,
+                        r.get("level"),
+                        r.get("order"),
+                        r.get("winner_team"),
+                        r.get("upgrade"),
+                        r.get("team_levels_before"),
+                        r.get("team_levels_after"),
+                        r.get("match_winner"),
+                        r.get("scores"),
+                    )
                 )
             else:
                 line = (
@@ -110,6 +139,18 @@ def check_finished(bot, ev, mismatches) -> None:
                 sorted(e["best"]),
             ):
                 mismatches.append((bot.name, ev.get("game_id"), e, (score, rank, best)))
+    elif isinstance(st, GuandanState):
+        # game.finished carries no hands: ask the server for our view of this hand.
+        gid = ev.get("game_id") or st.game_id
+        try:
+            view = bot.client.game_state(gid)
+        except ApiError as e:
+            mismatches.append((bot.name, gid, "state unavailable: %s" % e))
+            return
+        if view.get("game_id", gid) == st.game_id and sort_cards(
+            view.get("hand") or []
+        ) != sort_cards(st.hand):
+            mismatches.append((bot.name, gid, view.get("hand"), st.hand))
     else:
         hands = data.get("hands")
         if hands and st.seat is not None and st.seat < len(hands):
@@ -122,7 +163,9 @@ def check_finished(bot, ev, mismatches) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8080")
-    ap.add_argument("--game", choices=["ddz", "ddz4", "holdem"], default="ddz")
+    ap.add_argument(
+        "--game", choices=["ddz", "ddz4", "guandan", "holdem"], default="ddz"
+    )
     ap.add_argument("--players", type=int, default=None)
     ap.add_argument("--games", type=int, default=5)
     ap.add_argument("--invite", default=None)

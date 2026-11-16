@@ -1,9 +1,9 @@
-# ddz-sdk：斗地主 / 德州扑克 Bot 对战平台 Python SDK
+# ddz-sdk：斗地主 / 掼蛋 / 德州扑克 Bot 对战平台 Python SDK
 
-平台支持三种游戏：三人斗地主（`ddz`）、四人斗地主（`ddz4`）和无限注德州扑克（`holdem`）。用这个 SDK 写斗地主 bot，只需要实现两个方法：`on_bid`（叫几分）和 `on_play`（出什么牌），三人和四人用同一个 `Bot` 类；写德州扑克 bot 只需要实现 `on_action`（弃牌、过牌、跟注还是加注）。连接、断线重连、入座、准备、状态跟踪、出错兜底都由 SDK 处理。
+平台支持四种游戏：三人斗地主（`ddz`）、四人斗地主（`ddz4`）、掼蛋（`guandan`）和无限注德州扑克（`holdem`）。用这个 SDK 写斗地主 bot，只需要实现两个方法：`on_bid`（叫几分）和 `on_play`（出什么牌），三人和四人用同一个 `Bot` 类；写掼蛋 bot 实现 `on_play`，需要时再实现 `on_return`（还贡还哪张）；写德州扑克 bot 只需要实现 `on_action`（弃牌、过牌、跟注还是加注）。连接、断线重连、入座、准备、状态跟踪、出错兜底都由 SDK 处理。
 
 - Python ≥ 3.9，唯一运行时依赖是 `websocket-client`，HTTP 用标准库 `urllib`。
-- `ddz_sdk.rules`（三人）和 `ddz_sdk.rules4`（四人）是服务端斗地主规则引擎的纯 Python 移植，可以在本地判断牌型、生成合法出牌。正式比赛房间可能关闭 `/legal-moves` 接口，用它们就不依赖这个接口。`ddz_sdk.holdem` 是德州扑克 7 选 5 牌力评估的移植，分数和服务端摊牌结果里的 `score` 完全一致。
+- `ddz_sdk.rules`（三人）和 `ddz_sdk.rules4`（四人）是服务端斗地主规则引擎的纯 Python 移植，`ddz_sdk.rules_gd` 是掼蛋规则的实现，都可以在本地判断牌型、生成合法出牌。正式比赛房间可能关闭 `/legal-moves` 接口，用它们就不依赖这个接口。`ddz_sdk.holdem` 是德州扑克 7 选 5 牌力评估的移植，分数和服务端摊牌结果里的 `score` 完全一致。
 - 协议细节以 [`docs/api.md`](../../docs/api.md) 为准，第 8、9 节分别是四人斗地主和德州扑克。
 
 ## 安装
@@ -45,10 +45,11 @@ pip install pytest          # 可选，跑测试用
    ```bash
    python examples/run_table.py --base $BASE --game ddz    --games 5  --invite 邀请码   # 三人斗地主
    python examples/run_table.py --base $BASE --game ddz4   --games 5  --invite 邀请码   # 四人斗地主
+   python examples/run_table.py --base $BASE --game guandan --games 5 --invite 邀请码   # 掼蛋
    python examples/run_table.py --base $BASE --game holdem --players 6 --games 20 --invite 邀请码
    ```
 
-   `--players` 默认等于一桌的座位数（`ddz` 3、`ddz4` 4、`holdem` 6，德州扑克可以是 2–6）。可选参数：`--bots` 指定策略，按座位轮流使用（斗地主 `greedy` / `random`，德州扑克 `simple` / `random`）；`--chaos 2` 每 2 秒随机断开一个 bot 的 WebSocket，用来验证断线重连；`--strict` 在出现兜底、处理异常、被服务端代打或状态不一致时以非 0 退出码结束；`-v` 打印 SDK 日志。每局结束时脚本会把 SDK 跟踪的状态和服务端公开的结果对比（斗地主比剩余手牌，德州扑克比摊牌分数），不一致时打印 `MISMATCH`。
+   `--players` 默认等于一桌的座位数（`ddz` 3、`ddz4` 4、`guandan` 4、`holdem` 6，德州扑克可以是 2–6）。可选参数：`--bots` 指定策略，按座位轮流使用（斗地主和掼蛋 `greedy` / `random`，德州扑克 `simple` / `random`；掼蛋默认 `greedy,random`，即 0 队贪心、1 队随机）；`--chaos 2` 每 2 秒随机断开一个 bot 的 WebSocket，用来验证断线重连；`--strict` 在出现兜底、处理异常、被服务端代打或状态不一致时以非 0 退出码结束；`-v` 打印 SDK 日志。每局结束时脚本会把 SDK 跟踪的状态和服务端公开的结果对比（斗地主比剩余手牌，掼蛋比 `/games/{gid}/state` 里的手牌，德州扑克比摊牌分数），不一致时打印 `MISMATCH`。掼蛋一场比赛的每一局算一个 game。
 
    旧的 `run_three.py`（固定三人斗地主）仍然可用。
 
@@ -132,7 +133,7 @@ except ApiError as e:
     print(e.status, e.code, e.message, e.details)   # 例如 422 CANNOT_BEAT
 ```
 
-`Client` 为 api.md 里的每个 HTTP 接口都提供了一个方法：`register_bot`、`register_guest`、`me`、`list_rooms`、`create_room`、`get_room`、`quick_join`、`join_room`、`leave_room`、`ready`、`game_state`、`legal_moves`、`bid`、`play`（`pass_turn`）、`action`（德州扑克下注）、`get_game`、`replay`、`list_games`、`leaderboard`。非 2xx 响应抛出 `ApiError(status, code, message, details)`；网络错误的 `status` 为 0，`code` 为 `NETWORK_ERROR`。
+`Client` 为 api.md 里的每个 HTTP 接口都提供了一个方法：`register_bot`、`register_guest`、`me`、`list_rooms`、`create_room`、`get_room`、`quick_join`、`join_room`、`leave_room`、`ready`、`game_state`、`legal_moves`、`bid`、`play`（`pass_turn`）、`return_card`（掼蛋还贡）、`action`（德州扑克下注）、`get_game`、`replay`、`list_games`、`leaderboard`。非 2xx 响应抛出 `ApiError(status, code, message, details)`；网络错误的 `status` 为 0，`code` 为 `NETWORK_ERROR`。
 
 和游戏类型有关的参数都是可选的，不传时等于 `ddz`，旧代码不用改：
 
@@ -141,6 +142,9 @@ c.create_room("周五牌局", {"seats": 6}, game="holdem")   # 建德州扑克�
 c.quick_join(game="ddz4")                                # 只进四人斗地主房间
 c.leaderboard(game="holdem")                             # 德州扑克排行榜
 c.list_games(limit=20, game="ddz4")                      # 最近的四人斗地主对局
+c.quick_join(game="guandan")                             # 只进掼蛋房间
+c.return_card(game_id, "5S", seq=42)                     # 掼蛋还贡
+c.play(game_id, ["3S", "4S", "5S", "6S", "7H"], "straight", seq=43, pattern_rank="6")  # 指定解释
 c.list_games(limit=100, room_id="r_ab12cd")             # 某个房间的历史对局
 c.action(game_id, "raise", 12, seq=42)                   # 加注到本轮总额 12
 c.action(game_id, "call", seq=42)                        # fold / check / call 不需要 amount
@@ -182,6 +186,81 @@ legal_moves4(hand, state.to_beat_pattern)       # 能压过上家的所有出牌
 ```
 
 `parse_short` 给同一点数的第 5–8 张牌依次分配第二副牌的 `S H C D`。`cards.contains_all` 和 `cards.remove_cards` 按多重集合处理（每张重复的牌各算一次），对三人斗地主的结果不变。
+
+## 掼蛋（`guandan`）
+
+规则以 [`docs/guandan.md`](../../docs/guandan.md) 为准：4 人两副牌，座位 0、2 一队，1、3 一队；每人 27 张；有级牌、逢人配（红桃级牌）、同花顺、进贡还贡与抗贡。一场比赛有多局，每局是一个 game（`hand_no` 从 1 开始）。
+
+继承 `GuandanBot`，实现 `on_play`，需要时实现 `on_return`：
+
+```python
+from ddz_sdk import GuandanBot, GuandanState
+
+
+class MyGuandanBot(GuandanBot):
+    def on_return(self, state: GuandanState) -> str:
+        return state.returnable_cards()[0]           # 可还的牌（自然点数 2–10，不含逢人配），最小的在前
+
+    def on_play(self, state: GuandanState):
+        if state.to_beat and state.is_teammate(state.to_beat["seat"]):
+            return []                                # 不压队友
+        moves = state.legal_moves()                  # 本地生成，含逢人配的各种用法和同花顺
+        if not moves:
+            return []
+        return min(moves, key=lambda m: m.pattern.main)
+
+
+MyGuandanBot().run("https://ddz.ohmycat.me", token)          # 快速入座掼蛋
+# MyGuandanBot().run(base, token, room_id="r_ab12cd")        # 加入指定的掼蛋房间
+```
+
+`on_play` 可以返回牌的列表、`[]`（不出），或者 `state.legal_moves()` 里的一个 `Move`。返回 `Move` 时 SDK 把 `pattern` 的 `type` 和 `rank` 一起发给服务端，服务端就按这个解释出牌。例如打 7 时 `3S 4S 5S 6S 7H` 可以是 `23456` 或 `34567` 的顺子，也可以是同花顺，返回 `Move` 就不会被服务端按别的解释处理。
+
+示例 `examples/guandan_bot.py` 有两个策略：`GreedyGuandanBot`（留着炸弹和逢人配，不压队友，用最小的牌压对手，领出时出最长、最小的组合）和 `RandomGuandanBot`（随机合法出牌，用来测试）：
+
+```bash
+python examples/guandan_bot.py --base $BASE --token <你的token> [--strategy greedy|random] [--room r_xxx]
+```
+
+### `GuandanState` 字段
+
+| 字段 | 含义 |
+|---|---|
+| `seat`、`hand` | 你的座位和手牌，手牌按本局牌值升序；进贡、还贡的牌已经计入 |
+| `phase` | `waiting` / `return`（还贡）/ `playing` / `finished` |
+| `hand_no`、`level`、`level_team` | 第几局、本局级牌（`"2"`…`"A"`）、主打队 |
+| `team_levels`、`a_attempts` | 两队的级数、两队打 A 的次数 |
+| `tribute`、`returns` | 进贡 `{"anti","tributes":[{"from","to","card"}]}`（第一局为 `None`）、还贡记录 `[{"from","to","card"}]` |
+| `to_beat`、`can_pass` | 要压的牌 `{"seat","cards","pattern"}`，`None` 表示你领出；能否不出 |
+| `cards_left`、`order` | 每家剩余张数、已出完的座位（头游在前） |
+| `history`、`result`、`turn`、`remaining_ms`、`game_id`、`room_id`、`seq` | 其他信息 |
+
+辅助方法和属性：`state.legal_moves()`、`state.returnable_cards()`、`state.teammate`、`state.is_teammate(seat)`、`state.opponents()`、`state.team`、`state.is_level_team`、`state.next_seat()`（跳过已出完的座位）、`state.is_out(seat)`、`state.wildcard`（如 `"7H"`）、`state.wildcards`（手里有几张）、`state.value(card)`（本局牌值）、`state.leading`、`state.to_beat_pattern`、`state.return_to`（欠还贡的对象）、`state.resolve(cards)`。
+
+`GuandanBot` 的生命周期与 `Bot` 相同。`turn` 事件的 `phase` 为 `return` 时调用 `on_return`，为 `playing` 时调用 `on_play`。兜底：钩子抛异常、返回值本地校验不合法，或服务端返回 422 时，还贡还最小的一张可还牌；出牌时能不出就不出，领出时出牌值最小的单张（不出逢人配，除非只剩逢人配）。
+
+### 规则库 `ddz_sdk.rules_gd`
+
+```python
+from ddz_sdk.rules_gd import identify_gd, resolve_gd, beats_gd, legal_moves_gd, GdPattern
+
+identify_gd(["3S", "4S", "5S", "6S", "7H"], "7")
+# straight 6、straight 7、straight_flush 6、straight_flush 7 四种解释
+resolve_gd(["3S", "4S", "5S", "6S", "7H"], None, "7")                  # 领出：straight_flush(7)
+resolve_gd(["3S", "4H", "5S", "6S", "7H"], {"type": "straight", "rank": "6"}, "7")   # 跟牌：straight(7)
+beats_gd({"type": "pair", "rank": "7"}, {"type": "pair", "rank": "A"}, "7")         # True，打 7 时 7 比 A 大
+legal_moves_gd(hand, state.to_beat_pattern, state.level)                # 能压过上家的所有出牌
+```
+
+`GdPattern` 是 `Pattern` 的子类，多一个 `level` 字段，`main` 的含义与斗地主不同：
+
+- 单张、对子、三同张、三带二、炸弹：`main` 是本局牌值。非级牌的 12 个点数按 `2 < 3 < … < A` 取 0–11，级牌 12，小王 13，大王 14。
+- 顺子、木板、钢板、同花顺：`main` 是最大一张的顺序位置，`A(低) 2 3 … K A(高)` 依次为 0–13。例如 `A2345` 为 4，`TJQKA` 为 13。
+- 天王炸：`main` 为 14，`length` 为 4；炸弹的 `length` 是张数，其余牌型为 1。
+
+同一牌型里 `main` 越大越强，所以 `min(moves, key=lambda m: m.pattern.main)` 能取到最小的出牌。`pattern.rank` 和 `pattern.to_api()` 给出 API 的 `{"type","rank","length"}`（`rank` 是 `"2"`…`"A"`、`"BJ"`、`"RJ"`，顺子类为最大一张）；从 API 转回来用 `GdPattern.from_api(d, level)`。炸弹类的大小用 `bomb_tier(p)` 比较：4 张炸弹 0 < 5 张 1 < 同花顺 2 < 6 张 3 < 7 张 4 < 8 张 5 < 天王炸 6。
+
+`legal_moves_gd` 把用 0、1、2 张逢人配的每种出法分别列出（如 `33` 和 `3 + 7H`），自然牌取花色最小的，同花顺用真实花色。27 张手牌含 2 张逢人配时，领出的合法出牌约 500–750 个，生成一次约 3 ms。
 
 ## 德州扑克（`holdem`）
 
@@ -277,7 +356,7 @@ pytest tests                    # 规则、客户端、bot 状态机的离线测
 black .
 ```
 
-`tests/data/engine_fixtures.json` 是 TypeScript 规则引擎（以它为准）对随机手牌算出的参考结果，测试用它逐项核对 `rules4` 和 `holdem` 的移植。引擎规则改动后，在仓库根目录重新生成：
+`tests/data/engine_fixtures.json` 是 TypeScript 规则引擎（以它为准）对随机手牌算出的参考结果，测试用它逐项核对 `rules4` 和 `holdem` 的移植。`rules_gd` 按 `docs/guandan.md` 实现，测试用穷举小手牌全部子集的方式核对 `legal_moves_gd` 和 `identify_gd` 一致。引擎规则改动后，在仓库根目录重新生成：
 
 ```bash
 node --disable-warning=ExperimentalWarning sdk/python/tests/data/gen_fixtures.ts > sdk/python/tests/data/engine_fixtures.json

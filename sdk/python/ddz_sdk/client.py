@@ -1,4 +1,4 @@
-"""HTTP client for the Dou Dizhu platform (``/api/v1``), stdlib ``urllib`` only.
+"""HTTP client for the card-game platform (``/api/v1``), stdlib ``urllib`` only.
 
 Every method returns the decoded JSON response body (a ``dict``). Non-2xx responses
 raise :class:`ApiError` with the server's ``code`` / ``message`` / ``details``.
@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 
-USER_AGENT = "ddz-sdk-python/0.2.0"
+USER_AGENT = "ddz-sdk-python/0.3.0"
 
 
 class ApiError(Exception):
@@ -127,7 +127,8 @@ class Client:
         config: Optional[Dict[str, Any]] = None,
         game: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """``POST /rooms`` -> ``Room``. ``game``: ``"ddz"`` (default), ``"ddz4"`` or ``"holdem"``.
+        """``POST /rooms`` -> ``Room``. ``game``: ``"ddz"`` (default), ``"ddz4"``, ``"holdem"``
+        or ``"guandan"``.
 
         Example: ``create_room("table", {"seats": 6}, game="holdem")``.
         """
@@ -145,7 +146,8 @@ class Client:
         return self._req("GET", "/rooms/%s" % _q(room_id))
 
     def quick_join(self, game: Optional[str] = None) -> Dict[str, Any]:
-        """-> ``{"room": Room, "seat": int}``. Only joins rooms of ``game`` (default ``ddz``)."""
+        """-> ``{"room": Room, "seat": int}``. Only joins rooms of ``game`` (default ``ddz``;
+        also ``ddz4``, ``holdem``, ``guandan``)."""
         body: Dict[str, Any] = {}
         if game is not None:
             body["game"] = game
@@ -170,7 +172,9 @@ class Client:
 
     def legal_moves(self, game_id: str) -> Dict[str, Any]:
         """Dou Dizhu: ``{"moves": [{"cards","pattern"}], "can_pass"}``; Hold'em:
-        ``{"actions": {"fold","check","call","raise"} | None}``. May 403 LEGAL_MOVES_DISABLED.
+        ``{"actions": {"fold","check","call","raise"} | None}``; Guandan: like Dou Dizhu while
+        playing, ``{"return_cards": [...]}`` while returning a tribute. May 403
+        LEGAL_MOVES_DISABLED.
         """
         return self._req("GET", "/games/%s/legal-moves" % _q(game_id))
 
@@ -188,14 +192,29 @@ class Client:
         cards: Sequence[str],
         pattern_type: Optional[str] = None,
         seq: Optional[int] = None,
+        pattern_rank: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Play ``cards`` (empty = pass). ``pattern_type`` disambiguates (e.g. ``"plane_single"``)."""
+        """Play ``cards`` (empty = pass). ``pattern_type`` disambiguates (e.g. ``"plane_single"``);
+        Guandan also accepts ``pattern_rank`` (e.g. ``"7"`` for the straight 3-7 played with a
+        wildcard) and answers 422 ``PATTERN_MISMATCH`` if that interpretation does not exist.
+        """
         body: Dict[str, Any] = {"cards": list(cards)}
         if pattern_type:
             body["pattern"] = {"type": pattern_type}
+            if pattern_rank:
+                body["pattern"]["rank"] = pattern_rank
         if seq is not None:
             body["seq"] = seq
         return self._req("POST", "/games/%s/play" % _q(game_id), body)
+
+    def return_card(
+        self, game_id: str, card: str, seq: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Guandan: give one card back to your tribute payer (还贡), ``POST /games/{gid}/return``."""
+        body: Dict[str, Any] = {"card": card}
+        if seq is not None:
+            body["seq"] = seq
+        return self._req("POST", "/games/%s/return" % _q(game_id), body)
 
     def pass_turn(self, game_id: str, seq: Optional[int] = None) -> Dict[str, Any]:
         return self.play(game_id, [], seq=seq)
@@ -247,7 +266,7 @@ class Client:
         )
 
     def leaderboard(self, game: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Leaderboard rows for one game type (server default ``ddz``)."""
+        """Leaderboard rows for one game type (server default ``ddz``; e.g. ``"guandan"``)."""
         path = "/leaderboard"
         if game:
             path += "?" + urllib.parse.urlencode({"game": game})
