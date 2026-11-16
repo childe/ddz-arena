@@ -1,0 +1,17 @@
+[Unit]
+Description=Game arena smart-bot service (seats smart bots when players invite them)
+After=ddz.service
+Wants=ddz.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/ddz
+EnvironmentFile=/etc/ddz.env
+Environment=DDZ_BOTS_STATE=/opt/ddz/data/smart_bots.json
+ExecStart=/usr/bin/python3 sdk/python/smart/service.py
+Restart=always
+RestartSec=5
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

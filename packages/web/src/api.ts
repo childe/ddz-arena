@@ -361,6 +361,9 @@ const ERROR_TEXT: Record<string, string> = {
   NOT_FOUND: '房间或牌局不存在',
   NAME_TAKEN: '名字已被占用',
   ROOM_FULL: '房间已满',
+  NO_FREE_BOT: '智能 bot 都在忙（每种游戏最多 4 个同时在打），稍后再试',
+  BOT_SERVICE_DOWN: '智能 bot 服务没有运行',
+  NOT_SEATED: '先入座才能邀请智能 bot',
   SEAT_TAKEN: '座位已有人',
   ALREADY_IN_ROOM: '你已经在别的房间里',
   NOT_IN_ROOM: '你不在这个房间',
@@ -444,6 +447,9 @@ export const api = {
       token,
       body: seat === undefined ? {} : { seat },
     }),
+  /** Ask the smart-bot service to fill up to `count` empty seats (default: all). */
+  inviteSmartBots: (token: string, rid: string, count?: number) =>
+    request<{ invited: number }>('POST', `/rooms/${encodeURIComponent(rid)}/smart-bots`, { token, body: count ? { count } : {} }),
   leave: (token: string, rid: string) => request<{ ok: true }>('POST', `/rooms/${encodeURIComponent(rid)}/leave`, { token, body: {} }),
   ready: (token: string, rid: string, ready = true) =>
     request<{ room: Room }>('POST', `/rooms/${encodeURIComponent(rid)}/ready`, { token, body: { ready } }),

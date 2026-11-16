@@ -13,6 +13,7 @@ const { app } = await buildApp({
   docsPath: resolve(root, 'docs/api.md'),
   rateLimit: process.env.DDZ_RATE_LIMIT ? Number(process.env.DDZ_RATE_LIMIT) : undefined,
   logger: process.env.DDZ_LOG !== '0',
+  botServiceKey: process.env.DDZ_BOT_SERVICE_KEY || undefined,
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

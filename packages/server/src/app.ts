@@ -8,7 +8,8 @@ import type { WebSocket } from 'ws';
 import { Arena } from './arena.ts';
 import { Db, type BotRow } from './db.ts';
 import { ApiError, badRequest } from './errors.ts';
-import { variantOf } from './games/index.ts';
+import { variantOf, type GameType } from './games/index.ts';
+import { SmartBots, SMART_GAMES } from './smartBots.ts';
 
 export interface AppOptions {
   dbPath: string;
@@ -17,6 +18,8 @@ export interface AppOptions {
   docsPath?: string;
   rateLimit?: number;
   logger?: boolean;
+  /** Shared secret of the smart-bot service (sdk/python/smart/service.py); unset disables invites. */
+  botServiceKey?: string;
 }
 
 const PING_MS = 20_000;
@@ -51,6 +54,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 64 * 1024 });
   const arena = new Arena(new Db(opts.dbPath), opts.inviteCode);
   const limiter = new RateLimiter(opts.rateLimit ?? 50);
+  const smartBots = new SmartBots(opts.botServiceKey);
   app.addHook('onClose', async () => arena.close());
 
   // Accept empty JSON bodies (e.g. `curl -X POST -H 'content-type: application/json'`).
@@ -142,6 +146,23 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   app.post<P>('/api/v1/rooms/:rid/leave', async (req) => {
     arena.leave(auth(req), arena.room(req.params.rid));
     return { ok: true };
+  });
+  app.post<P>('/api/v1/rooms/:rid/smart-bots', async (req, reply) => {
+    const bot = auth(req);
+    const room = arena.room(req.params.rid);
+    const invited = smartBots.invite(room, bot.id, body(req).count);
+    reply.status(202);
+    return { invited };
+  });
+  app.get('/api/v1/smart-bots', async () => smartBots.status());
+  app.get<{ Querystring: Record<string, string | undefined> }>('/api/v1/bot-service/poll', async (req) => {
+    smartBots.checkKey(req.headers['x-service-key']);
+    const free: Partial<Record<GameType, number>> = {};
+    for (const g of SMART_GAMES) {
+      const n = Number(req.query[`free_${g}`]);
+      free[g] = Number.isInteger(n) && n > 0 ? n : 0;
+    }
+    return { invites: smartBots.poll(free) };
   });
   app.post<P>('/api/v1/rooms/:rid/ready', async (req) => {
     const bot = auth(req);

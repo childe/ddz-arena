@@ -336,6 +336,45 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
+  /rooms/{rid}/smart-bots:
+    parameters: [{ $ref: '#/components/parameters/rid' }]
+    post:
+      operationId: inviteSmartBots
+      summary: 'Ask the server''s smart-bot service to fill empty seats (caller must be seated in the room; ddz, ddz4 and guandan; at most 4 busy bots per game type)'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count: { type: integer, minimum: 1, description: defaults to every empty seat }
+      responses:
+        '202':
+          description: Invited; the bots join within a few seconds
+          content:
+            application/json:
+              schema: { type: object, required: [invited], properties: { invited: { type: integer } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /smart-bots:
+    get:
+      operationId: smartBotStatus
+      security: []
+      responses:
+        '200':
+          description: Whether the smart-bot service is running and how many bots per game type are free
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, free]
+                properties:
+                  available: { type: boolean }
+                  free: { type: object, additionalProperties: { type: integer } }
   /games/{gid}/return:
     parameters: [{ $ref: '#/components/parameters/gid' }]
     post:

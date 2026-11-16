@@ -23,6 +23,9 @@ import { useGuest } from '../guest.ts';
 import { href } from '../router.ts';
 import { type OwnView, type TableState, applyEvent, currentGameId, emptyTable, tableFromSnapshot } from '../state.ts';
 import { LiveSocket, type SocketStatus } from '../ws.ts';
+
+/** Game types the server's smart-bot service can fill seats for. */
+const SMART_BOT_GAMES = ['ddz', 'ddz4', 'guandan'];
 import { GameList } from './Lobby.tsx';
 
 type Action =
@@ -289,6 +292,13 @@ export function RoomPage({ rid }: { rid: string }) {
   }
 
   const mySeatInfo = mySeat !== null ? room?.seats[mySeat] : null;
+  const emptySeats = room ? room.seats.filter((s) => !s).length : 0;
+  const canInvite = mySeat !== null && emptySeats > 0 && SMART_BOT_GAMES.includes(state.gameType);
+  const inviteBots = () =>
+    run(async () => {
+      const r = await api.inviteSmartBots(token!, rid);
+      toast(`已邀请 ${r.invited} 个智能 bot，马上入座`, 'info');
+    });
   const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : isGd ? !!gd && gd.phase !== 'finished' : !!g && g.phase !== 'finished';
   const readyControls = (
     <div className="controls">
@@ -299,6 +309,11 @@ export function RoomPage({ rid }: { rid: string }) {
       ) : (
         <button className="btn btn-primary" disabled={busy} onClick={() => setReady(true)}>
           准备
+        </button>
+      )}
+      {canInvite && (
+        <button className="btn" disabled={busy} onClick={inviteBots} title="由服务器上的智能 bot 坐满空位">
+          智能 bot 补位
         </button>
       )}
       <button className="btn" disabled={busy} onClick={leave}>

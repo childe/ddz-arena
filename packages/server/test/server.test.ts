@@ -9,7 +9,7 @@ let base: string;
 let wsBase: string;
 
 beforeAll(async () => {
-  ({ app } = await buildApp({ dbPath: ':memory:', inviteCode: 'secret', rateLimit: 1000 }));
+  ({ app } = await buildApp({ dbPath: ':memory:', inviteCode: 'secret', rateLimit: 1000, botServiceKey: 'svc-key' }));
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
@@ -351,6 +351,37 @@ describe('game types', () => {
     expect(rep.initial_hands).toHaveLength(4);
     [...listeners, spec].forEach((l) => l.close());
   }, 30000);
+});
+
+describe('smart-bot invites', () => {
+  it('queues invites for seated players up to the free bots the service reports', async () => {
+    const poll = async (q: string, key = 'svc-key') =>
+      (await fetch(`${base}/api/v1/bot-service/poll?${q}`, { headers: { 'x-service-key': key } }));
+    const owner = await makeBot();
+    const room = (await api('POST', '/api/v1/rooms', owner.token, { game: 'guandan' })).body;
+    // Not seated yet; then seated but the service has never polled.
+    expect((await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, {})).status).toBe(403);
+    await api('POST', `/api/v1/rooms/${room.id}/join`, owner.token, { seat: 0 });
+    expect((await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, {})).body.error.code).toBe('BOT_SERVICE_DOWN');
+    expect((await poll('free_guandan=2', 'wrong')).status).toBe(401);
+    expect((await (await poll('free_guandan=2&free_ddz=4')).json()).invites).toEqual([]);
+    expect((await api('GET', '/api/v1/smart-bots')).body).toEqual({ available: true, free: { ddz: 4, ddz4: 0, guandan: 2 } });
+    // 3 empty seats but only 2 free bots: 2 invited, then nothing left.
+    const r = await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, {});
+    expect(r.status).toBe(202);
+    expect(r.body.invited).toBe(2);
+    expect((await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, { count: 1 })).body.error.code).toBe('NO_FREE_BOT');
+    const got = (await (await poll('free_guandan=2')).json()).invites;
+    expect(got).toEqual([{ id: expect.any(Number), room_id: room.id, game: 'guandan', count: 2 }]);
+    // Handed-out invites stay deducted until the service reports again.
+    expect((await api('GET', '/api/v1/smart-bots')).body.free.guandan).toBe(0);
+    // Hold'em has no smart bots.
+    const h = (await api('POST', '/api/v1/rooms', owner.token, { game: 'holdem' })).body;
+    await api('POST', `/api/v1/rooms/${room.id}/leave`, owner.token, {});
+    await api('POST', `/api/v1/rooms/${h.id}/join`, owner.token, {});
+    expect((await api('POST', `/api/v1/rooms/${h.id}/smart-bots`, owner.token, {})).status).toBe(400);
+    await api('POST', `/api/v1/rooms/${h.id}/leave`, owner.token, {});
+  });
 });
 
 describe('Guandan', () => {

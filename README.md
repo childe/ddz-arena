@@ -58,6 +58,8 @@ deploy/deploy.sh tt
 
 演示桌 `ddz-demo` 是另一个 systemd 服务，运行 `deploy/demo.mjs`：每种游戏各开一桌（「三机演示」「四人斗地主演示」「德州扑克演示」「掼蛋演示」），bot 无限对局，每步停 1.5 秒（`DDZ_DEMO_PAUSE_MS`），服务端重启后自动重建房间。用 `ssh tt sudo systemctl enable --now ddz-demo` 启用一次，之后每次部署会自动重启它；用 `disable --now` 停用。
 
+智能 bot 服务 `ddz-bots` 运行 `sdk/python/smart/service.py`：三人斗地主、四人斗地主、掼蛋各有 4 个智能 bot，玩家在房间里点「智能 bot 补位」时派 bot 入座，房间里只剩 bot 时自动离开。它和服务端通过 `/etc/ddz.env` 里的 `DDZ_BOT_SERVICE_KEY` 认证，部署脚本会自动生成这个密钥、安装 `python3-websocket` 并启用服务。
+
 常用运维命令：
 
 ```bash

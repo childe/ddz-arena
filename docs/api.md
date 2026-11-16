@@ -76,6 +76,8 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/rooms/{rid}/join` | 是 | `{"seat"?}` | `{"room":Room, "seat"}` |
 | POST | `/rooms/{rid}/leave` | 是 | — | `{"ok":true}` |
 | POST | `/rooms/{rid}/ready` | 是 | `{"ready"?: true}` | `{"room":Room}` |
+| POST | `/rooms/{rid}/smart-bots` | 是（须已在该房间入座） | `{"count"?: n}`，默认补满所有空位 | `202 {"invited": n}`，见 7.3 节 |
+| GET | `/smart-bots` | 否 | — | `{"available", "free":{"ddz","ddz4","guandan"}}`：智能 bot 服务是否在线、各游戏空闲几个 |
 
 `game` 是游戏类型，默认 `ddz`：
 
@@ -369,7 +371,16 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 
 座位坐满后，其他 bot 再 `/join` 会得到 `409 ROOM_FULL`；指定的座位已有人时得到 `409 SEAT_TAKEN`。房间没有密码，知道房间号的任何 bot 都能坐进空位。
 
-### 7.3 对局和结果
+### 7.3 找智能 bot 陪玩
+
+手头没有能跑 bot 的电脑时，可以让服务器上的智能 bot 补位：先在网页上入座，再点房间里的「智能 bot 补位」，空位会被智能 bot 坐满并自动准备，你点准备后就开局。接口是 `POST /rooms/{rid}/smart-bots`，只有已经坐在这个房间里的人能调用。
+
+- 支持三人斗地主、四人斗地主和掼蛋，德州扑克没有智能 bot。
+- 每种游戏最多同时有 4 个智能 bot 在打（三人斗地主的「智能斗地主A–D」、四人斗地主的「智能四人A–D」、掼蛋的「智能掼蛋A–D」）。都在忙时返回 `409 NO_FREE_BOT`；空位比空闲的 bot 多时只补一部分，返回值 `invited` 是实际派出的个数。服务没在运行时返回 `503 BOT_SERVICE_DOWN`。
+- 房间里只剩智能 bot 时，它们约 20 秒后自动离开，名额随之释放。
+- 这些 bot 的代码在 [`sdk/python/smart/`](https://github.com/childe/ddz-arena/tree/main/sdk/python/smart)，也可以自己运行它们（见那里的 README）。
+
+### 7.4 对局和结果
 
 - 围观：任何人打开 `https://ddz.ohmycat.me/#/room/<房间号>` 就能实时观看，不需要登录。
 - 计分：`Room.seats[].score` 是每个座位在这个房间里的累计得分，`games_played` 是已打局数。平台不限制局数，打多少局、按什么判胜负由参赛各方约定。
@@ -377,7 +388,7 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 - 回放：每局结束后可以在房间页或大厅的对局列表里打开回放，或调用 `GET /games/{gid}/replay`。
 - 排行榜：`GET /leaderboard` 按 bot 统计所有房间的累计成绩。
 
-### 7.4 注意事项
+### 7.5 注意事项
 
 - 房间只保存在服务端内存里。服务端重启后所有房间消失，需要重新建房间；已经打完的对局、回放和排行榜保存在数据库里，不受影响。
 - 房间里没有人入座、也没有人围观的状态持续 10 分钟，房间会自动关闭。建好房间后尽快把房间号发给对方，或者一直开着房间页面。
