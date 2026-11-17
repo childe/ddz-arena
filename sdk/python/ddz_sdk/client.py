@@ -11,9 +11,9 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
-USER_AGENT = "ddz-sdk-python/0.3.0"
+USER_AGENT = "ddz-sdk-python/0.4.0"
 
 
 class ApiError(Exception):
@@ -127,8 +127,8 @@ class Client:
         config: Optional[Dict[str, Any]] = None,
         game: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """``POST /rooms`` -> ``Room``. ``game``: ``"ddz"`` (default), ``"ddz4"``, ``"holdem"``
-        or ``"guandan"``.
+        """``POST /rooms`` -> ``Room``. ``game``: ``"ddz"`` (default), ``"ddz4"``, ``"holdem"``,
+        ``"guandan"`` or ``"gongzhu"``.
 
         Example: ``create_room("table", {"seats": 6}, game="holdem")``.
         """
@@ -147,7 +147,7 @@ class Client:
 
     def quick_join(self, game: Optional[str] = None) -> Dict[str, Any]:
         """-> ``{"room": Room, "seat": int}``. Only joins rooms of ``game`` (default ``ddz``;
-        also ``ddz4``, ``holdem``, ``guandan``)."""
+        also ``ddz4``, ``holdem``, ``guandan``, ``gongzhu``)."""
         body: Dict[str, Any] = {}
         if game is not None:
             body["game"] = game
@@ -177,7 +177,8 @@ class Client:
     def legal_moves(self, game_id: str) -> Dict[str, Any]:
         """Dou Dizhu: ``{"moves": [{"cards","pattern"}], "can_pass"}``; Hold'em:
         ``{"actions": {"fold","check","call","raise"} | None}``; Guandan: like Dou Dizhu while
-        playing, ``{"return_cards": [...]}`` while returning a tribute. May 403
+        playing, ``{"return_cards": [...]}`` while returning a tribute; Gongzhu:
+        ``{"exposable": [...]}`` while exposing, ``{"cards": [...]}`` while playing. May 403
         LEGAL_MOVES_DISABLED.
         """
         return self._req("GET", "/games/%s/legal-moves" % _q(game_id))
@@ -220,6 +221,25 @@ class Client:
             body["seq"] = seq
         return self._req("POST", "/games/%s/return" % _q(game_id), body)
 
+    def expose(
+        self, game_id: str, cards: Sequence[str], seq: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Gongzhu: expose (亮牌) some of ``QS`` / ``JD`` / ``TC`` / ``AH``,
+        ``POST /games/{gid}/expose``; ``cards=[]`` exposes nothing."""
+        body: Dict[str, Any] = {"cards": list(cards)}
+        if seq is not None:
+            body["seq"] = seq
+        return self._req("POST", "/games/%s/expose" % _q(game_id), body)
+
+    def play_card(
+        self, game_id: str, card: str, seq: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Gongzhu: play one card, ``POST /games/{gid}/play`` with ``{"card": ...}``."""
+        body: Dict[str, Any] = {"card": card}
+        if seq is not None:
+            body["seq"] = seq
+        return self._req("POST", "/games/%s/play" % _q(game_id), body)
+
     def pass_turn(self, game_id: str, seq: Optional[int] = None) -> Dict[str, Any]:
         return self.play(game_id, [], seq=seq)
 
@@ -255,9 +275,31 @@ class Client:
         bot_id: Optional[str] = None,
         game: Optional[str] = None,
         room_id: Optional[str] = None,
+        before: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Recent finished games (``GameSummary`` list, newest first), optionally only those
-        of one bot, one ``game`` type and/or one room."""
+        of one bot, one ``game`` type and/or one room. ``before`` (a game id) returns the
+        games that finished before that one; :meth:`iter_games` pages through all of them.
+        """
+        return self._games_page(limit, bot_id, game, room_id, before)["games"]
+
+    def iter_games(
+        self,
+        bot_id: Optional[str] = None,
+        game: Optional[str] = None,
+        room_id: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Iterator[Dict[str, Any]]:
+        """Every finished game matching the filters, newest first, fetched page by page."""
+        before = None
+        while True:
+            page = self._games_page(page_size, bot_id, game, room_id, before)
+            yield from page["games"]
+            before = page.get("next")
+            if not before:
+                return
+
+    def _games_page(self, limit, bot_id, game, room_id, before) -> Dict[str, Any]:
         params: Dict[str, Any] = {"limit": limit}
         if bot_id:
             params["bot_id"] = bot_id
@@ -265,9 +307,10 @@ class Client:
             params["game"] = game
         if room_id:
             params["room_id"] = room_id
-        return self._req("GET", "/games?" + urllib.parse.urlencode(params)).get(
-            "games", []
-        )
+        if before:
+            params["before"] = before
+        page = self._req("GET", "/games?" + urllib.parse.urlencode(params))
+        return {"games": page.get("games", []), "next": page.get("next")}
 
     def leaderboard(self, game: Optional[str] = None) -> List[Dict[str, Any]]:
         """Leaderboard rows for one game type (server default ``ddz``; e.g. ``"guandan"``)."""

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { type AnyReplay, ApiError, GAME_LABELS, api, errorText } from '../api.ts';
+import { GongzhuHistory, GongzhuTable } from '../components/GongzhuTable.tsx';
 import { GuandanHistory, GuandanTable } from '../components/GuandanTable.tsx';
 import { History } from '../components/History.tsx';
 import { HoldemHistory, HoldemTable, holdemSeats } from '../components/HoldemTable.tsx';
@@ -81,6 +82,7 @@ export function ReplayPage({ gid }: { gid: string }) {
   const finalState = states[last]!;
   const isHoldem = finalState.gameType === 'holdem';
   const isGd = finalState.gameType === 'guandan';
+  const isGz = finalState.gameType === 'gongzhu';
   const n = isHoldem ? holdemSeats(finalState) : tableSeats(finalState);
   // Hold'em: only seats that played this hand.
   const viewSeats = Array.from({ length: n }, (_, s) => s).filter((s) => !isHoldem || finalState.holdem?.stacks[s] !== null);
@@ -158,12 +160,22 @@ export function ReplayPage({ gid }: { gid: string }) {
           <HoldemTable state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
         ) : isGd ? (
           <GuandanTable state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
+        ) : isGz ? (
+          <GongzhuTable state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
         ) : (
           <Table state={cur} viewSeat={viewSeat} reveal={god} showTimers={false} />
         )}
         <aside className="room-side">
           <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
-          {isHoldem ? <HoldemHistory state={cur} /> : isGd ? <GuandanHistory state={cur} /> : <History state={cur} />}
+          {isHoldem ? (
+            <HoldemHistory state={cur} />
+          ) : isGd ? (
+            <GuandanHistory state={cur} />
+          ) : isGz ? (
+            <GongzhuHistory state={cur} />
+          ) : (
+            <History state={cur} />
+          )}
         </aside>
       </div>
     </div>

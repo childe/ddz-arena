@@ -1,5 +1,5 @@
 """Python SDK for the card-game bot platform: Dou Dizhu (斗地主, 3 or 4 players), Guandan
-(掼蛋) and No-Limit Texas Hold'em.
+(掼蛋), Gongzhu (拱猪) and No-Limit Texas Hold'em.
 
 Dou Dizhu (``ddz`` / ``ddz4``)::
 
@@ -32,6 +32,19 @@ Guandan (``guandan``)::
 
     MyGuandanBot().run("http://localhost:8080", token)        # quick-join a guandan room
 
+Gongzhu (``gongzhu``)::
+
+    from ddz_sdk import GongzhuBot, GongzhuState
+
+    class MyGongzhuBot(GongzhuBot):
+        def choose_expose(self, state: GongzhuState):
+            return []                         # expose nothing
+
+        def choose_card(self, state: GongzhuState) -> str:
+            return state.legal_cards()[0]     # follow suit, exposed-card lock applied
+
+    MyGongzhuBot().run("http://localhost:8080", token)        # quick-join a gongzhu room
+
 Texas Hold'em (``holdem``)::
 
     from ddz_sdk import Action, HoldemBot, HoldemState
@@ -45,12 +58,14 @@ Texas Hold'em (``holdem``)::
 
 from .bot import Bot, GameState
 from .client import ApiError, Client, register_bot
+from .gongzhu_bot import GongzhuBot, GongzhuState
 from .guandan_bot import GuandanBot, GuandanState
 from .holdem import evaluate
 from .holdem_bot import Action, HoldemBot, HoldemState
 from .rules import Move, Pattern, RuleError, beats, identify, legal_moves, resolve
 from .rules4 import beats4, identify4, legal_moves4, resolve4
 from .rules_gd import GdPattern, beats_gd, identify_gd, legal_moves_gd, resolve_gd
+from .rules_gz import legal_cards, score_taken, trick_winner
 
 __all__ = [
     "Action",
@@ -59,6 +74,8 @@ __all__ = [
     "Client",
     "GameState",
     "GdPattern",
+    "GongzhuBot",
+    "GongzhuState",
     "GuandanBot",
     "GuandanState",
     "HoldemBot",
@@ -73,6 +90,7 @@ __all__ = [
     "identify",
     "identify4",
     "identify_gd",
+    "legal_cards",
     "legal_moves",
     "legal_moves4",
     "legal_moves_gd",
@@ -80,5 +98,7 @@ __all__ = [
     "resolve",
     "resolve4",
     "resolve_gd",
+    "score_taken",
+    "trick_winner",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

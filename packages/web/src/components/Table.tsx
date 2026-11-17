@@ -28,7 +28,7 @@ export interface TableProps {
 
 /** Seat count of the Dou Dizhu table (3 or 4). */
 export function tableSeats(state: TableState): number {
-  return state.game?.n ?? state.guandan?.n ?? state.room?.seats.length ?? ddzSeats(state.gameType);
+  return state.game?.n ?? state.guandan?.n ?? state.gongzhu?.n ?? state.room?.seats.length ?? ddzSeats(state.gameType);
 }
 
 export function Table(props: TableProps) {

@@ -8,7 +8,7 @@ import type { GameType } from './games/index.ts';
 import type { Room } from './room.ts';
 
 /** Game types the service has smart bots for. */
-export const SMART_GAMES: GameType[] = ['ddz', 'ddz4', 'guandan'];
+export const SMART_GAMES: GameType[] = ['ddz', 'ddz4', 'guandan', 'gongzhu'];
 /** The service counts as down if it has not polled for this long. */
 const ALIVE_MS = 15_000;
 

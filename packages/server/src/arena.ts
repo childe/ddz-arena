@@ -26,16 +26,23 @@ export class Arena {
   private spectators = new Map<string, Set<WebSocket>>();
   private tokenCache = new Map<string, BotRow>();
   private sweeper: NodeJS.Timeout;
+  private packer: NodeJS.Timeout;
 
   constructor(db: Db, inviteCode?: string) {
     this.db = db;
     this.inviteCode = inviteCode || undefined;
     this.sweeper = setInterval(() => this.sweep(), 60_000);
     this.sweeper.unref();
+    // Compress replays written before compression, a little at a time so play is not held up.
+    this.packer = setInterval(() => {
+      if (this.db.packOldReplays(20) === 0) clearInterval(this.packer);
+    }, 100);
+    this.packer.unref();
   }
 
   close() {
     clearInterval(this.sweeper);
+    clearInterval(this.packer);
     for (const r of this.rooms.values()) r.dispose();
   }
 
@@ -188,8 +195,15 @@ export class Arena {
     return JSON.parse(row.replay);
   }
 
-  recentGames(limit: number, filter: GameFilter = {}) {
-    return this.db.recentGames(limit, filter).map((g) => ({
+  /** Newest first; `before` is a game id from the previous page (see `next`). */
+  recentGames(limit: number, filter: GameFilter = {}, before?: string) {
+    let cursor: { id: string; finished_at: number } | undefined;
+    if (before !== undefined) {
+      const row = this.db.game(before);
+      if (!row) throw badRequest('before must be the id of a finished game');
+      cursor = { id: row.id, finished_at: row.finished_at };
+    }
+    return this.db.recentGames(limit, filter, cursor).map((g) => ({
       game_id: g.id, room_id: g.room_id, game: g.game_type,
       players: (JSON.parse(g.players) as (Player | null)[]).flatMap((p, seat) => (p ? [{ seat, ...p }] : [])), result: JSON.parse(g.result),
       started_at: g.started_at, finished_at: g.finished_at,

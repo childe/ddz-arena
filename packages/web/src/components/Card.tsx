@@ -75,9 +75,11 @@ interface CardProps {
   wild?: boolean;
   /** Greyed out and not clickable (e.g. cards that cannot be returned). */
   disabled?: boolean;
+  /** Short tag in the lower left (e.g. 亮 for a gongzhu exposed card). */
+  tag?: string;
 }
 
-export function PlayingCard({ code, back, size = 'md', selected, onClick, style, className = '', wild, disabled }: CardProps) {
+export function PlayingCard({ code, back, size = 'md', selected, onClick, style, className = '', wild, disabled, tag }: CardProps) {
   const cls = `card card-${size}${selected ? ' selected' : ''}${onClick ? ' clickable' : ''}${wild ? ' card-wild' : ''}${disabled ? ' card-disabled' : ''} ${className}`;
   if (back || !code) {
     return (
@@ -112,6 +114,7 @@ export function PlayingCard({ code, back, size = 'md', selected, onClick, style,
           </div>
           <div className="card-center">{suit}</div>
           {wild && <div className="wild-tag">配</div>}
+          {tag && !wild && <div className="wild-tag card-tag">{tag}</div>}
         </>
       )}
     </div>
@@ -137,6 +140,8 @@ interface HandProps {
   wild?: CardCode;
   /** Cards for which this returns false are greyed out and not clickable. */
   enabled?: (code: CardCode) => boolean;
+  /** Tag text per card (see PlayingCard `tag`). */
+  tagOf?: (code: CardCode) => string | undefined;
 }
 
 /** True below 640px, where long own hands are split into two rows. */
@@ -185,7 +190,7 @@ function cardAt(rowsEl: HTMLElement, x: number, y: number): number {
  * cards are picked by pointer: a tap toggles one card, a press-and-slide toggles every card
  * it passes over (sliding back untoggles them again).
  */
-export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate, wild, enabled }: HandProps) {
+export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate, wild, enabled, tagOf }: HandProps) {
   const drag = useRef<{ start: number; toggled: Set<number> } | null>(null);
   const items: (CardCode | null)[] = cards ? cards : new Array<null>(backs).fill(null);
   const keys = cards ? cardKeys(cards) : items.map((_, i) => `b${i}`);
@@ -255,6 +260,7 @@ export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows =
                 className={pick && !off ? 'clickable' : ''}
                 wild={c !== null && c === wild}
                 disabled={off}
+                tag={c !== null && tagOf ? tagOf(c) : undefined}
                 style={animate ? { animationDelay: `${i * 25}ms` } : undefined}
               />
             );

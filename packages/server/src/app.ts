@@ -202,15 +202,17 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     const bot = auth(req);
     return liveRoomFor(req.params.gid).legalMoves(bot.id);
   });
-  for (const op of ['bid', 'play', 'action', 'return']) {
+  for (const op of ['bid', 'play', 'action', 'return', 'expose']) {
     app.post<P>(`/api/v1/games/:gid/${op}`, async (req) => doAct(auth(req), req.params.gid, op, body(req)));
   }
   app.get<P>('/api/v1/games/:gid', async (req) => arena.publicGame(req.params.gid));
   app.get<P>('/api/v1/games/:gid/replay', async (req) => arena.replay(req.params.gid));
-  app.get<{ Querystring: { limit?: string; bot_id?: string; game?: string; room_id?: string } }>('/api/v1/games', async (req) => {
+  app.get<{ Querystring: { limit?: string; bot_id?: string; game?: string; room_id?: string; before?: string } }>('/api/v1/games', async (req) => {
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const gameType = req.query.game === undefined ? undefined : variantOf(req.query.game).type;
-    return { games: arena.recentGames(limit, { botId: req.query.bot_id, gameType, roomId: req.query.room_id }) };
+    const games = arena.recentGames(limit, { botId: req.query.bot_id, gameType, roomId: req.query.room_id }, req.query.before);
+    // A full page may have more after it: pass `next` as `before` to get the next page.
+    return { games, next: games.length === limit ? games[games.length - 1]!.game_id : null };
   });
   app.get<{ Querystring: { game?: string } }>('/api/v1/leaderboard', async (req) => ({
     game: variantOf(req.query.game).type,
@@ -279,7 +281,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
       }
       if (msg.op === 'ping') return sendJson(ws, { type: 'pong', ts: Date.now() });
       const op = typeof msg.op === 'string' ? msg.op : '';
-      if (!['bid', 'play', 'action', 'return'].includes(op)) return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid, play, action or return' } } });
+      if (!['bid', 'play', 'action', 'return', 'expose'].includes(op)) return sendJson(ws, { type: 'reply', req_id: msg.req_id ?? null, status: 400, body: { error: { code: 'BAD_REQUEST', message: 'op must be ping, bid, play, action, return or expose' } } });
       let status = 200;
       let result: unknown;
       try {

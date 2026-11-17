@@ -13,6 +13,7 @@ import {
 } from '@ddz/engine';
 import { type Card, type HoldemAction, type Room, type WsEvent, ApiError, GAME_LABELS, api, errorText } from '../api.ts';
 import { cardKeys, cardsByKeys, keysForCards, patternName } from '../components/Card.tsx';
+import { GongzhuControls, GongzhuHistory, GongzhuTable, gzEnabled, gzToggle } from '../components/GongzhuTable.tsx';
 import { GuandanControls, GuandanHistory, GuandanTable, gdEnabled, gdToggle } from '../components/GuandanTable.tsx';
 import { GuestForm } from '../components/Guest.tsx';
 import { History } from '../components/History.tsx';
@@ -25,7 +26,7 @@ import { type OwnView, type TableState, applyEvent, currentGameId, emptyTable, t
 import { LiveSocket, type SocketStatus } from '../ws.ts';
 
 /** Game types the server's smart-bot service can fill seats for. */
-const SMART_BOT_GAMES = ['ddz', 'ddz4', 'guandan'];
+const SMART_BOT_GAMES = ['ddz', 'ddz4', 'guandan', 'gongzhu'];
 import { GameList } from './Lobby.tsx';
 
 type Action =
@@ -156,11 +157,13 @@ export function RoomPage({ rid }: { rid: string }) {
   const isHoldem = state.gameType === 'holdem';
   const isDdz4 = state.gameType === 'ddz4';
   const isGd = state.gameType === 'guandan';
+  const isGz = state.gameType === 'gongzhu';
   const g = state.game;
   const hg = state.holdem;
   const gd = state.guandan;
+  const gz = state.gongzhu;
   const room = state.room;
-  const myHand = mySeat !== null ? ((isGd ? gd?.hands[mySeat] : g?.hands[mySeat]) ?? null) : null;
+  const myHand = mySeat !== null ? ((isGd ? gd?.hands[mySeat] : isGz ? gz?.hands[mySeat] : g?.hands[mySeat]) ?? null) : null;
   const myTurn = !!g && mySeat !== null && g.turn === mySeat && g.phase !== 'finished';
   const handKey = myHand?.join(',') ?? '';
 
@@ -176,10 +179,10 @@ export function RoomPage({ rid }: { rid: string }) {
   useEffect(() => {
     hintIdx.current = 0;
   }, [g?.turn_seq, g?.game_id]);
-  // A new deal, a finished game or the end of the guandan return phase clears the selection.
+  // A new deal, a finished game or the end of the guandan return / gongzhu expose phase clears the selection.
   useEffect(() => {
     setSelected((sel) => (sel.size ? new Set() : sel));
-  }, [g?.game_id, g?.phase === 'finished', gd?.game_id, gd?.phase]);
+  }, [g?.game_id, g?.phase === 'finished', gd?.game_id, gd?.phase, gz?.game_id, gz?.phase]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -202,7 +205,9 @@ export function RoomPage({ rid }: { rid: string }) {
       ? !!hg && hg.phase !== 'finished' && mySeat !== null && hg.stacks[mySeat] !== null && hg.stacks[mySeat] !== undefined
       : isGd
         ? !!gd && gd.phase !== 'finished'
-        : !!g && g.phase !== 'finished';
+        : isGz
+          ? !!gz && gz.phase !== 'finished'
+          : !!g && g.phase !== 'finished';
     if (inGame && !confirm('对局中离开，你的座位会托管到本局结束。确定离开？')) return;
     return run(async () => {
       await api.leave(token!, rid);
@@ -229,6 +234,12 @@ export function RoomPage({ rid }: { rid: string }) {
   const returnGd = (card: Card) =>
     run(async () => {
       await api.returnCard(token!, gd!.game_id, card, seqArg());
+      setSelected(new Set());
+    });
+  const exposeGz = (cards: Card[]) => run(() => api.expose(token!, gz!.game_id, cards, seqArg()));
+  const playGz = (card: Card) =>
+    run(async () => {
+      await api.playCard(token!, gz!.game_id, card, seqArg());
       setSelected(new Set());
     });
   const act = (action: HoldemAction, amount?: number) => run(() => api.action(token!, hg!.game_id, action, amount, seqArg()));
@@ -314,7 +325,13 @@ export function RoomPage({ rid }: { rid: string }) {
       navigate(href.lobby());
     });
   };
-  const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : isGd ? !!gd && gd.phase !== 'finished' : !!g && g.phase !== 'finished';
+  const gameRunning = isHoldem
+    ? !!hg && hg.phase !== 'finished'
+    : isGd
+      ? !!gd && gd.phase !== 'finished'
+      : isGz
+        ? !!gz && gz.phase !== 'finished'
+        : !!g && g.phase !== 'finished';
   const readyControls = (
     <div className="controls">
       {mySeatInfo?.ready ? (
@@ -338,7 +355,25 @@ export function RoomPage({ rid }: { rid: string }) {
   );
 
   let controls = null;
-  if (playerMode && isGd) {
+  if (playerMode && isGz) {
+    const inHand = !!gz && mySeat !== null && gz.players.some((p) => p.seat === mySeat && p.bot_id === guest?.bot_id);
+    if (gz && gameRunning && inHand) {
+      controls = (
+        <GongzhuControls state={state} mySeat={mySeat!} selected={selected} busy={busy} onExpose={exposeGz} onPlay={playGz} onLeave={leave} />
+      );
+    } else if (!gameRunning) {
+      controls = readyControls;
+    } else {
+      controls = (
+        <div className="controls controls-waiting">
+          <span className="muted">本局进行中，你从下一局开始参加</span>
+          <button className="btn btn-small" disabled={busy} onClick={leave}>
+            离开
+          </button>
+        </div>
+      );
+    }
+  } else if (playerMode && isGd) {
     const inHand = !!gd && mySeat !== null && gd.players.some((p) => p.seat === mySeat && p.bot_id === guest?.bot_id);
     if (gd && gameRunning && inHand) {
       controls = (
@@ -454,7 +489,7 @@ export function RoomPage({ rid }: { rid: string }) {
       ? `等待玩家入座（${filled}/${seatTotal}）`
       : `等待准备（${readyCount}/${seatTotal}）`;
   const hasEmpty = room ? room.seats.some((s) => !s) : false;
-  const finishedView = isHoldem ? hg : isGd ? gd : g;
+  const finishedView = isHoldem ? hg : isGd ? gd : isGz ? gz : g;
   const finishedGid = finishedView?.phase === 'finished' ? finishedView.game_id : null;
   const resultFooter = finishedGid ? (
     <a className="btn btn-small" href={href.replay(finishedGid)}>
@@ -517,6 +552,21 @@ export function RoomPage({ rid }: { rid: string }) {
             idleText={idleText}
             resultFooter={resultFooter}
           />
+        ) : isGz ? (
+          <GongzhuTable
+            state={state}
+            viewSeat={mySeat ?? 0}
+            reveal={false}
+            showTimers
+            mySeat={mySeat}
+            selected={selected}
+            onToggle={gz && mySeat !== null && gz.phase === 'playing' ? gzToggle(setSelected) : undefined}
+            enabled={gz && mySeat !== null ? gzEnabled(gz, mySeat) : undefined}
+            seatExtra={seatExtra}
+            controls={controls}
+            idleText={idleText}
+            resultFooter={resultFooter}
+          />
         ) : (
         <Table
           state={state}
@@ -534,7 +584,15 @@ export function RoomPage({ rid }: { rid: string }) {
         )}
         <aside className="room-side">
           <h3>{isHoldem ? '行动记录' : '出牌记录'}</h3>
-          {isHoldem ? <HoldemHistory state={state} /> : isGd ? <GuandanHistory state={state} /> : <History state={state} />}
+          {isHoldem ? (
+            <HoldemHistory state={state} />
+          ) : isGd ? (
+            <GuandanHistory state={state} />
+          ) : isGz ? (
+            <GongzhuHistory state={state} />
+          ) : (
+            <History state={state} />
+          )}
           <h3 className="room-games-title">本房间对局</h3>
           <GameList key={rid} limit={10} roomId={rid} />
         </aside>

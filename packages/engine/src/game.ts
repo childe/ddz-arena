@@ -20,7 +20,10 @@ export type GameErrorCode =
   | 'CANNOT_CHECK'
   | 'BAD_AMOUNT'
   | 'PATTERN_MISMATCH'
-  | 'BAD_RETURN';
+  | 'BAD_RETURN'
+  | 'MUST_FOLLOW_SUIT'
+  | 'EXPOSED_CARD_LOCKED'
+  | 'BAD_EXPOSE';
 
 const STATUS: Record<GameErrorCode, number> = {
   WRONG_PHASE: 409,
@@ -37,6 +40,9 @@ const STATUS: Record<GameErrorCode, number> = {
   BAD_AMOUNT: 422,
   PATTERN_MISMATCH: 422,
   BAD_RETURN: 422,
+  MUST_FOLLOW_SUIT: 422,
+  EXPOSED_CARD_LOCKED: 422,
+  BAD_EXPOSE: 422,
 };
 
 export class GameError extends Error {

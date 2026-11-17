@@ -1356,10 +1356,18 @@ select {
   background: #fdecef;
   color: #a61e4d;
 }
+.game-gongzhu {
+  background: #e6fcf5;
+  color: #087f5b;
+}
 @media (prefers-color-scheme: dark) {
   .game-guandan {
     background: #3b1424;
     color: #faa2c1;
+  }
+  .game-gongzhu {
+    background: #0b3326;
+    color: #8ce99a;
   }
   .game-ddz {
     background: #3a2012;
@@ -1911,11 +1919,14 @@ select {
 }
 /* Long names in the narrow side seats end in an ellipsis instead of spilling out. */
 .gd-table .seat-side .seat-head,
-.gd-table .seat-side .seat-meta {
+.gd-table .seat-side .seat-meta,
+.gz-table .seat-side .seat-head,
+.gz-table .seat-side .seat-meta {
   width: 100%;
   min-width: 0;
 }
-.gd-table .seat-side .seat-name {
+.gd-table .seat-side .seat-name,
+.gz-table .seat-side .seat-name {
   max-width: 100%;
 }
 .gd-seat.gd-out .seat-name {
@@ -2112,5 +2123,133 @@ select {
   }
   .gd-xfer {
     font-size: 11px;
+  }
+}
+
+/* ---------- gongzhu ---------- */
+
+.gz-info {
+  gap: 6px;
+}
+.gz-table .center-plays-top > .play-slot {
+  flex: 1;
+}
+/* The trick reads as a cross: left and right stay side by side even on phones. */
+.gz-table .center-plays.gz-plays {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.gz-played {
+  width: auto;
+}
+.gz-played.gz-won .card {
+  box-shadow: 0 0 0 3px #ffd43b, -1px 1px 3px rgba(0, 0, 0, 0.3);
+}
+.gz-played.gz-won .pattern-name {
+  background: #f59f00;
+  color: #2b1700;
+  font-weight: 700;
+}
+.gz-exposed-play {
+  width: auto;
+}
+.gz-exposed-play .hand-rows {
+  width: calc(var(--cw-sm) * 2.5);
+}
+.table .badge.gz-expose-badge,
+.result-panel .badge.gz-expose-badge {
+  background: #e8590c;
+  color: #fff;
+  font-weight: 600;
+}
+.gz-seat .seat-stats b {
+  font-variant-numeric: tabular-nums;
+}
+.gz-seat .seat-stats .pos {
+  color: #8ce99a;
+}
+.gz-seat .seat-stats .neg {
+  color: #ffa8a8;
+}
+.gz-taken {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 2px;
+}
+.gz-taken .hand-rows {
+  flex: 1;
+  min-width: 0;
+  max-width: calc(var(--cw-xs) * 6);
+}
+.gz-taken-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.seat-main .gz-taken .hand-rows {
+  max-width: calc(var(--cw-xs) * 9);
+}
+.card-tag {
+  background: #e8590c;
+}
+.gz-controls {
+  row-gap: 6px;
+}
+.gz-expose-opts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+.controls .btn.gz-expose-opt {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.gz-result .result-table td:first-child {
+  white-space: nowrap;
+}
+.gz-result .result-table .badge {
+  margin-left: 4px;
+}
+.gz-total {
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.gz-total .pos {
+  color: #2f9e44;
+}
+.gz-total .neg {
+  color: #e03131;
+}
+.gz-log-trick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+.gz-log-play {
+  white-space: nowrap;
+}
+.gz-log-win {
+  font-weight: 700;
+}
+.gz-log-finish {
+  display: flex;
+  flex-direction: column;
+}
+@media (max-width: 480px) {
+  .gz-table .seat-top .seat-hand {
+    width: auto;
+  }
+  .gz-taken .hand-rows {
+    max-width: calc(var(--cw-xs) * 4);
   }
 }

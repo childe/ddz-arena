@@ -4,6 +4,7 @@ import {
   type GameSummary,
   type GameType,
   type GdResult,
+  type GzResult,
   type HoldemResult,
   type LeaderboardRow,
   type Room,
@@ -16,6 +17,7 @@ import {
 } from '../api.ts';
 import { GuestForm } from '../components/Guest.tsx';
 import { toast } from '../components/Toast.tsx';
+import { gzResultSummary } from '../gongzhuState.ts';
 import { gdResultSummary } from '../guandanState.ts';
 import { useGuest } from '../guest.ts';
 import { href, navigate } from '../router.ts';
@@ -110,8 +112,8 @@ function Rooms() {
         const a = sec(actionSec, '行动时限');
         if (a !== undefined) config.action_timeout_ms = a;
       } else {
-        const b = game === 'guandan' ? undefined : sec(bidSec, '叫分时限');
-        const p = sec(playSec, game === 'guandan' ? '出牌/还贡时限' : '出牌时限');
+        const b = game === 'guandan' || game === 'gongzhu' ? undefined : sec(bidSec, '叫分时限');
+        const p = sec(playSec, game === 'guandan' ? '出牌/还贡时限' : game === 'gongzhu' ? '亮牌/出牌时限' : '出牌时限');
         if (b !== undefined) config.bid_timeout_ms = b;
         if (p !== undefined) config.play_timeout_ms = p;
       }
@@ -165,9 +167,9 @@ function Rooms() {
                     行动时限
                     <input type="number" min={1} max={120} value={actionSec} onChange={(e) => setActionSec(e.target.value)} placeholder="15" /> 秒
                   </label>
-                ) : game === 'guandan' ? (
+                ) : game === 'guandan' || game === 'gongzhu' ? (
                   <label>
-                    出牌/还贡时限
+                    {game === 'guandan' ? '出牌/还贡时限' : '亮牌/出牌时限'}
                     <input type="number" min={1} max={120} value={playSec} onChange={(e) => setPlaySec(e.target.value)} placeholder="20" /> 秒
                   </label>
                 ) : (
@@ -295,15 +297,17 @@ function GameRow({ g }: { g: GameSummary }) {
   const type = gameTypeOf(g.game);
   const holdem = type === 'holdem';
   const guandan = type === 'guandan';
-  const dr = !holdem && !guandan ? ((g.result ?? null) as GameResult | null) : null;
+  const gongzhu = type === 'gongzhu';
+  const dr = !holdem && !guandan && !gongzhu ? ((g.result ?? null) as GameResult | null) : null;
   const hr = holdem ? ((g.result ?? null) as HoldemResult | null) : null;
   const gr = guandan ? ((g.result ?? null) as GdResult | null) : null;
+  const zr = gongzhu ? ((g.result ?? null) as GzResult | null) : null;
   const time = fmtTime(g.finished_at ?? g.ended_at ?? g.started_at ?? g.created_at);
   const names = (g.players ?? []).map((p, i) => {
     const seat = typeof p.seat === 'number' ? p.seat : i;
     const sc = g.result?.scores?.[seat];
     const landlord = !!dr && (g.landlord === seat || dr.landlord === seat);
-    const winner = !!hr?.winners?.includes(seat) || (!!gr && seat % 2 === gr.winner_team);
+    const winner = !!hr?.winners?.includes(seat) || (!!gr && seat % 2 === gr.winner_team) || (!!zr && (zr.scores?.[seat] ?? 0) > 0);
     return (
       <span key={seat} className={`gp${landlord ? ' gp-landlord' : ''}${winner ? ' gp-winner' : ''}`}>
         {p.name}
@@ -322,6 +326,7 @@ function GameRow({ g }: { g: GameSummary }) {
           {dr?.anti_spring && <span className="badge badge-warn">反春</span>}
           {hr && <span className="badge">底池 {hr.pot}{hr.showdown ? ' · 摊牌' : ''}</span>}
           {gr && <span className={`badge${gr.match_winner !== null && gr.match_winner !== undefined ? ' badge-warn' : ''}`}>{gdResultSummary(gr)}</span>}
+          {zr && gzResultSummary(zr) && <span className={`badge${zr.match_over ? ' badge-warn' : ''}`}>{gzResultSummary(zr)}</span>}
           {time && <span className="muted game-time">{time}</span>}
         </div>
         {names.length > 0 && <div className="game-players">{names}</div>}
@@ -339,8 +344,8 @@ function LeaderboardTable({ game, setGame }: { game: GameType; setGame: (g: Game
   const { data, error } = usePoll(() => api.leaderboard(game), 15000);
   const [sort, setSort] = useState<'score' | 'winrate' | 'games'>('score');
   const holdem = game === 'holdem';
-  /** No landlord in hold'em or guandan. */
-  const noLandlord = holdem || game === 'guandan';
+  /** No landlord in hold'em, guandan or gongzhu. */
+  const noLandlord = holdem || game === 'guandan' || game === 'gongzhu';
   const picker = (
     <select value={game} onChange={(e) => setGame(e.target.value as GameType)} aria-label="游戏类型">
       {GAME_TYPES.map((t) => (
@@ -423,6 +428,7 @@ function LeaderboardTable({ game, setGame }: { game: GameType; setGame: (g: Game
       )}
       {holdem && <p className="muted lb-note">德州扑克：胜率按赢到筹码的手数计算，累计筹码是每手净输赢之和。</p>}
       {game === 'guandan' && <p className="muted lb-note">掼蛋：每局计一次，头游所在队算胜；得分为本队升级数（赢下一场再加 3），输的一队扣同样的分。</p>}
+      {game === 'gongzhu' && <p className="muted lb-note">拱猪：每局计一次；得分为 (4 × 本局得分 − 四人本局得分之和) / 10，大于 0 算胜。</p>}
     </div>
   );
 }

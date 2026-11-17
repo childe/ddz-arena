@@ -231,8 +231,13 @@ describe('full game over HTTP + WebSocket', () => {
     expect(rep.events.some((e: Ev) => e.type === 'game.finished')).toBe(true);
     expect(rep.events.every((e: Ev) => e.type !== 'game.started' || e.data.hand === undefined)).toBe(true);
     expect((await api('POST', `/api/v1/games/${gid}/play`, ll.token, { cards: [] })).body.error.code).toBe('WRONG_PHASE');
-    const games = (await api('GET', `/api/v1/games?bot_id=${ll.bot_id}`)).body.games;
-    expect(games[0].game_id).toBe(gid);
+    const list = (await api('GET', `/api/v1/games?bot_id=${ll.bot_id}`)).body;
+    expect(list.games[0].game_id).toBe(gid);
+    expect(list.next).toBeNull();
+    const page = (await api('GET', `/api/v1/games?bot_id=${ll.bot_id}&limit=1`)).body;
+    expect(page.next).toBe(gid);
+    expect((await api('GET', `/api/v1/games?bot_id=${ll.bot_id}&before=${gid}`)).body).toEqual({ games: [], next: null });
+    expect((await api('GET', '/api/v1/games?before=g_nope')).status).toBe(400);
     const lb = (await api('GET', '/api/v1/leaderboard')).body.bots;
     expect(lb.find((b: any) => b.bot_id === ll.bot_id).games).toBe(1);
 
@@ -388,7 +393,7 @@ describe('smart-bot invites', () => {
     expect((await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, {})).body.error.code).toBe('BOT_SERVICE_DOWN');
     expect((await poll('free_guandan=2', 'wrong')).status).toBe(401);
     expect((await (await poll('free_guandan=2&free_ddz=4')).json()).invites).toEqual([]);
-    expect((await api('GET', '/api/v1/smart-bots')).body).toEqual({ available: true, free: { ddz: 4, ddz4: 0, guandan: 2 } });
+    expect((await api('GET', '/api/v1/smart-bots')).body).toEqual({ available: true, free: { ddz: 4, ddz4: 0, guandan: 2, gongzhu: 0 } });
     // 3 empty seats but only 2 free bots: 2 invited, then nothing left.
     const r = await api('POST', `/api/v1/rooms/${room.id}/smart-bots`, owner.token, {});
     expect(r.status).toBe(202);
@@ -467,6 +472,68 @@ describe('Guandan', () => {
     const lb = (await api('GET', '/api/v1/leaderboard?game=guandan')).body;
     expect(lb.bots.find((b: any) => b.bot_id === bots[0]!.bot_id).games).toBe(2);
     const rep = (await api('GET', `/api/v1/games/${gid2}/replay`)).body;
+    expect(rep.initial_hands).toHaveLength(4);
+    [...listeners, spec].forEach((l) => l.close());
+  }, 60000);
+});
+
+describe('Gongzhu', () => {
+  /** Drive one hand through the API: expose nothing, then play the first legal card. */
+  async function playHand(bots: { token: string }[], gid: string) {
+    for (let steps = 0; ; steps++) {
+      const s = (await api('GET', `/api/v1/games/${gid}`)).body;
+      if (s.phase === 'finished') return s;
+      const bot = bots[s.turn]!;
+      const legal = (await api('GET', `/api/v1/games/${gid}/legal-moves`, bot.token)).body;
+      const r =
+        s.phase === 'expose'
+          ? await api('POST', `/api/v1/games/${gid}/expose`, bot.token, { cards: [] })
+          : await api('POST', `/api/v1/games/${gid}/play`, bot.token, { card: legal.cards[0] });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      if (steps > 200) throw new Error('too many steps');
+    }
+  }
+
+  it('plays hands with exposing, tricks and carried totals', async () => {
+    const { bots, listeners, spec, gid } = await startTable('gongzhu', 4);
+    const started = await Promise.all(listeners.map((l) => l.wait((e) => e.type === 'game.started')));
+    started.forEach((e) => expect(e.data.hand).toHaveLength(13));
+    const s0 = spec.events.find((e) => e.type === 'game.started')!.data;
+    expect(s0.hand).toBeUndefined();
+    expect(s0).toMatchObject({ game: 'gongzhu', hand_no: 1, totals: [0, 0, 0, 0] });
+    // The holder of 2C exposes first and leads.
+    const holder = started.findIndex((e) => e.data.hand.includes('2C'));
+    expect(s0.first_leader).toBe(holder);
+    const v = (await api('GET', `/api/v1/games/${gid}`)).body;
+    expect(v).toMatchObject({ phase: 'expose', turn: holder, exposed: [[], [], [], []] });
+    const lead = bots[holder]!;
+    expect((await api('POST', `/api/v1/games/${gid}/play`, lead.token, { card: '2C' })).status).toBe(409);
+    const st = (await api('GET', `/api/v1/games/${gid}/state`, lead.token)).body;
+    expect(st.legal.phase).toBe('expose');
+    const bad = await api('POST', `/api/v1/games/${gid}/expose`, lead.token, { cards: ['2C'] });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.code).toBe('BAD_EXPOSE');
+    const ex = await api('POST', `/api/v1/games/${gid}/expose`, lead.token, { cards: st.legal.exposable });
+    expect(ex.status).toBe(200);
+    const shown = await spec.wait((e) => e.type === 'exposed');
+    expect(shown.data).toEqual({ seat: holder, cards: st.legal.exposable, auto: false });
+
+    const fin1 = await playHand(bots, gid);
+    expect(fin1.result.taken.flat()).toHaveLength(16);
+    expect(fin1.result.scores.reduce((a: number, b: number) => a + b, 0)).toBe(0);
+    expect(fin1.result.exposed[holder]).toEqual(st.legal.exposable);
+    const won = spec.events.filter((e) => e.type === 'trick.won' && e.game_id === gid);
+    expect(won.length).toBe(fin1.tricks.length);
+    expect(won.flatMap((e) => e.data.cards).sort()).toEqual(fin1.result.taken.flat().sort());
+
+    // Second hand: totals carried, the pig taker leads.
+    const started2 = await spec.wait((e) => e.type === 'game.started' && e.game_id !== gid, 10000);
+    expect(started2.data).toMatchObject({ hand_no: 2, totals: fin1.result.totals_after, first_leader: fin1.result.pig });
+    const fin2 = await playHand(bots, started2.game_id);
+    expect(fin2.result.totals_before).toEqual(fin1.result.totals_after);
+    const lb = (await api('GET', '/api/v1/leaderboard?game=gongzhu')).body;
+    expect(lb.bots.find((b: any) => b.bot_id === bots[0]!.bot_id).games).toBe(2);
+    const rep = (await api('GET', `/api/v1/games/${started2.game_id}/replay`)).body;
     expect(rep.initial_hands).toHaveLength(4);
     [...listeners, spec].forEach((l) => l.close());
   }, 60000);

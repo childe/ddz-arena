@@ -2,7 +2,7 @@
 
 Base URL：`https://ddz.ohmycat.me`（下文路径都相对于它），WebSocket 地址把 `https` 换成 `wss`（即 `wss://ddz.ohmycat.me`）。域名经过 Cloudflare 代理；也可以用 `http://43.128.99.230` 直连服务器。所有请求和响应都是 JSON。
 
-接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛；第 8、9、10 节是四人斗地主、德州扑克和掼蛋。
+接口与语言无关，任何能发 HTTP 请求、连 WebSocket 的语言都能实现 bot。本文是完整协议；第 6 节是不用 SDK、从零实现 bot 的教程；第 7 节说明怎么约别人的 bot 同桌比赛；第 8、9、10、11 节是四人斗地主、德州扑克、掼蛋和拱猪。
 
 | 资料 | 用途 |
 |---|---|
@@ -114,7 +114,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/games/{gid}/play` | 是 | `{"cards":[...], "pattern"?:{"type"}, "seq"?}` | `{"ok":true,"seq","pattern"}` |
 | GET | `/games/{gid}` | 否 | — | `PublicGame`（进行中或已结束都可） |
 | GET | `/games/{gid}/replay` | 否 | — | `Replay`（仅已结束） |
-| GET | `/games?limit=20&bot_id=&game=&room_id=` | 否 | — | `{"games":[GameSummary]}`，最近结束的对局，新的在前；参数可组合 |
+| GET | `/games?limit=20&bot_id=&game=&room_id=&before=` | 否 | — | `{"games":[GameSummary], "next"}`，已结束的对局，新的在前；参数可组合。翻页：把上一页返回的 `next` 作为 `before` 传入，取更早的一页；`next` 为 `null` 表示已经到最早的一局。`limit` 最大 100 |
 | GET | `/leaderboard?game=ddz` | 否 | — | `{"game","bots":[{"bot_id","name","games","wins","landlord_games","landlord_wins","score","timeouts"}]}`，按游戏类型分开统计，默认 `ddz` |
 
 牌局结束后，对它调用 `/state`、`/bid`、`/play` 返回 `409 WRONG_PHASE`，请改用 `/games/{gid}` 或 `/replay`。
@@ -171,7 +171,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | 403 | `NOT_OWNER` 不是房间创建者 · `BAD_INVITE` 邀请码错误 · `NOT_A_PLAYER` 不是该局玩家 · `LEGAL_MOVES_DISABLED` 房间关闭了合法出牌接口 |
 | 404 | `NOT_FOUND` 房间或牌局不存在 |
 | 409 | `NAME_TAKEN` · `ROOM_FULL` · `SEAT_TAKEN` · `ALREADY_IN_ROOM` · `NOT_IN_ROOM` · `WRONG_PHASE` · `NOT_YOUR_TURN` · `STALE_SEQ` · `GAME_IN_PROGRESS` |
-| 422 | `BID_TOO_LOW` · `CARDS_NOT_IN_HAND` · `MUST_PLAY` 首出不能不出 · `INVALID_PATTERN` 不成牌型 · `CANNOT_BEAT` 压不过 |
+| 422 | `BID_TOO_LOW` · `CARDS_NOT_IN_HAND` · `MUST_PLAY` 首出不能不出 · `INVALID_PATTERN` 不成牌型 · `CANNOT_BEAT` 压不过 · 拱猪的 `MUST_FOLLOW_SUIT` · `EXPOSED_CARD_LOCKED` · `BAD_EXPOSE`（见第 11 节） |
 | 429 | `RATE_LIMITED` 每个 bot 平均每秒最多 50 次请求（HTTP 和 WebSocket 出牌合计），瞬时最多 100 次 |
 
 非法出牌不会结束你的回合，可以在截止时间内修正后重试。
@@ -601,3 +601,67 @@ WebSocket 同样可以发 `{"op":"action","req_id":"1","game_id":"g_x","action":
 ```
 
 规则引擎在 [`packages/engine/src/guandan/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/guandan)，判定以它为准；`legalMovesGd` 能枚举含逢人配的所有合法出牌，可以作为移植参考。完整规则说明见 [`docs/guandan.md`](https://github.com/childe/ddz-arena/blob/main/docs/guandan.md)。
+
+## 11. 拱猪（`game: "gongzhu"`）
+
+4 人各自为战的拱猪（标准规则 + 亮牌），一场累计到 -1000 结束。房间、入座、准备、围观、回放、重连的机制和斗地主相同。没有叫分；先用 `/expose` 亮牌，再用 `/play` 每次出一张牌。
+
+建房：`POST /rooms {"game":"gongzhu"}`；快速入座：`POST /rooms/quick-join {"game":"gongzhu"}`。4 个座位都有人且都已准备时开局。房间配置只有 `play_timeout_ms`（亮牌和出牌共用，默认 20000）、`legal_moves_api` 和 `auto_restart`。一场比赛由同一房间里连续的多局组成，累计分和首出者在局与局之间传递；服务端重启或房间关闭后从头开始。
+
+### 11.1 牌和分牌
+
+- 一副牌 52 张（没有王），每人 13 张。编码与斗地主相同；同一花色内 `2` 最小、`A` 最大，没有主牌。出牌顺序 0→1→2→3→0。
+- 分牌：猪 `QS` -100；羊 `JD` +100；变压器 `TC` 把自己其余分牌的得分翻倍，没有其他分牌时 +50；红桃 `AH` -50、`KH` -40、`QH` -30、`JH` -20、`TH`…`5H` 各 -10、`4H` `3H` `2H` 0，合计 -200。
+- **全红**：一人收齐 13 张红桃，红桃记 +200，同时收到的猪改记 +100。一人收齐 16 张分牌（全收）为 +800。
+- **亮牌**翻倍：亮猪 → ±200；亮羊 → +200；亮变压器 → 乘 4（单独时 +100）；亮 `AH` → 所有红桃翻倍。亮牌对收到这张牌的人生效，不论是谁亮的。
+
+### 11.2 一局的流程
+
+1. 发牌，每人 13 张。一场的第一局由持 `2C` 的人先出（可以出任意牌），之后由上一局收到猪的人先出（`first_leader`）。
+2. **亮牌**：从首出者开始轮流，每人调用一次 `/expose`，亮出手中 `QS` / `JD` / `TC` / `AH` 中的任意几张，或 `cards: []` 不亮。
+3. **出牌**：领出一张，其余人依次各出一张。有领出花色的牌必须跟；没有时可以出任意牌。亮出的牌在这门花色第一次被领出的那一轮里不能出（领出和跟牌都不行），除非它是手中这门花色唯一的一张。领出花色中最大的牌赢这一墩，收走分牌并领出下一墩。
+4. 13 墩打完，或 16 张分牌都已被收走时，本局结束。
+
+### 11.3 计分
+
+- `points`：本局得分；`totals_after`：累计分。某局后有人累计 ≤ -1000，这一场结束（`match_over`，`losers` 为这些座位），下一局累计清零。
+- `scores`（排行榜用）：`(4 × 本局得分 − 四人本局得分之和) / 10`，四人之和为 0，大于 0 记为赢。
+
+### 11.4 接口
+
+| 方法 | 路径 / WS op | 请求体 | 返回 |
+|---|---|---|---|
+| POST | `/games/{gid}/expose` / `expose` | `{"cards":["QS"], "seq"?}`，`cards: []` 为不亮 | `{"ok":true,"seq"}` |
+| POST | `/games/{gid}/play` / `play` | `{"card":"5S", "seq"?}`（也接受 `{"cards":["5S"]}`） | `{"ok":true,"seq"}` |
+| GET | `/games/{gid}/legal-moves` | — | 亮牌时 `{"exposable":[...]}`；出牌时 `{"cards":[...]}` |
+
+错误码（422）：`MUST_FOLLOW_SUIT` 有领出花色却没跟；`EXPOSED_CARD_LOCKED` 亮出的牌在这门花色首轮不能出；`BAD_EXPOSE` 亮了不能亮或不在手里的牌。
+
+超时代打：亮牌阶段不亮；出牌阶段出可出牌中最小的一张，优先不是分牌的牌。
+
+### 11.5 事件
+
+| `type` | `data` |
+|---|---|
+| `game.started` | `{"game":"gongzhu","players","hand_no":1,"totals":[0,0,0,0],"first_leader":2,"cards_left":[13,13,13,13]}`，只发给你的还有 `hand` |
+| `turn` | `{"seat","phase":"expose"\|"playing","trick_no","led_suit","trick"}`；`trick` 是进行中的这一墩 `{"leader","plays":[{"seat","card"}],"winner":null}`，还没人出时为 null |
+| `exposed` | `{"seat","cards":["QS"],"auto"}` |
+| `played` | `{"seat","card","trick_no","cards_left","auto"}` |
+| `trick.won` | `{"seat":赢家,"trick_no","plays":[{"seat","card"}],"cards":[这一墩里的分牌]}`，紧跟这一墩最后一张的 `played` |
+| `game.finished` | `{"result":{"points":[-100,-150,200,-50],"totals_before","totals_after","taken":[["QS"],...],"exposed":[[],["AH"],[],[]],"all_hearts":null,"pig":0,"losers":[],"match_over":false,"scores":[-30,-50,90,-10]},"hands","seed"}` |
+
+### 11.6 视图
+
+`PublicGame` 的拱猪字段：`phase`（`expose` / `playing` / `finished`）、`hand_no`、`totals`（本局前的累计）、`first_leader`、`exposed`（每个座位亮出的牌）、`turn`、`trick_no`、`led_suit`、`trick`、`tricks`（已完成的墩，含 `winner`）、`taken`（每人已收的分牌）、`cards_left`、`result`。`PlayerGame` 再加 `seat`、`hand`，轮到你时还有 `legal`：亮牌阶段 `{"phase":"expose","exposable"}`，出牌阶段 `{"phase":"playing","cards"}`。回放有 `initial_hands` 和 `seed`。
+
+### 11.7 bot 主循环
+
+```
+收到 turn 且 data.seat == 我的座位:
+    data.phase == "expose": 从可亮的牌里选几张（可以不选），POST /games/{gid}/expose {"cards":[...], "seq":...}
+    data.phase == "playing": 从可出的牌里选一张，POST /games/{gid}/play {"card":..., "seq":...}
+收到 exposed：记下谁亮了什么（影响分值和首轮限制）
+收到 trick.won：记下谁收了哪些分牌；某人在某花色垫了别的牌，说明他这门花色已经没牌
+```
+
+规则引擎在 [`packages/engine/src/gongzhu/`](https://github.com/childe/ddz-arena/tree/main/packages/engine/src/gongzhu)，判定以它为准。完整规则说明见 [`docs/gongzhu.md`](https://github.com/childe/ddz-arena/blob/main/docs/gongzhu.md)。

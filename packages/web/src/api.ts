@@ -2,14 +2,20 @@
 
 export type Card = string;
 export type Phase = 'bidding' | 'playing' | 'finished';
-export type GameType = 'ddz' | 'ddz4' | 'holdem' | 'guandan';
+export type GameType = 'ddz' | 'ddz4' | 'holdem' | 'guandan' | 'gongzhu';
 
-export const GAME_TYPES: GameType[] = ['ddz', 'ddz4', 'holdem', 'guandan'];
-export const GAME_LABELS: Record<GameType, string> = { ddz: '三人斗地主', ddz4: '四人斗地主', holdem: '德州扑克', guandan: '掼蛋' };
+export const GAME_TYPES: GameType[] = ['ddz', 'ddz4', 'holdem', 'guandan', 'gongzhu'];
+export const GAME_LABELS: Record<GameType, string> = {
+  ddz: '三人斗地主',
+  ddz4: '四人斗地主',
+  holdem: '德州扑克',
+  guandan: '掼蛋',
+  gongzhu: '拱猪',
+};
 
 /** Normalizes an unknown `game` field (missing = ddz, the server default). */
 export function gameTypeOf(v: unknown): GameType {
-  return v === 'ddz4' || v === 'holdem' || v === 'guandan' ? v : 'ddz';
+  return v === 'ddz4' || v === 'holdem' || v === 'guandan' || v === 'gongzhu' ? v : 'ddz';
 }
 
 export interface ApiPattern {
@@ -273,11 +279,90 @@ export interface GuandanReplay extends GuandanPublicGame {
   events: WsEvent[];
 }
 
-export type AnyPublicGame = PublicGame | HoldemPublicGame | GuandanPublicGame;
-export type AnyReplay = Replay | HoldemReplay | GuandanReplay;
+// ---- Gongzhu (docs/gongzhu.md section 5) ----
+
+export type GzPhase = 'expose' | 'playing' | 'finished';
+
+export interface GzPlayRecord {
+  seat: number;
+  card: Card;
+  /** Played by the server on timeout (events only). */
+  auto?: boolean;
+}
+
+export interface GzTrickRecord {
+  leader: number;
+  plays: GzPlayRecord[];
+  /** Set once all four have played. */
+  winner: number | null;
+}
+
+export interface GzResult {
+  /** Points of this hand per seat. */
+  points: number[];
+  totals_before: number[];
+  totals_after: number[];
+  /** Scoring cards each seat took. */
+  taken: Card[][];
+  exposed: Card[][];
+  /** Seat that took all 13 hearts (全红), if any. */
+  all_hearts: number | null;
+  /** Seat that took the pig; it leads the next hand. */
+  pig: number | null;
+  /** Seats whose total reached -1000; the match is over when non-empty. */
+  losers: number[];
+  match_over: boolean;
+  scores: number[];
+}
+
+export interface GongzhuPublicGame {
+  game_id: string;
+  room_id: string;
+  game: 'gongzhu';
+  phase: GzPhase;
+  players: Player[];
+  hand_no: number;
+  /** Cumulative points before this hand. */
+  totals: number[];
+  first_leader: number;
+  exposed: Card[][];
+  turn: number | null;
+  deadline: number | null;
+  remaining_ms: number | null;
+  trick_no: number;
+  led_suit: string | null;
+  /** Trick in progress, null between tricks. */
+  trick: GzTrickRecord | null;
+  /** Completed tricks. */
+  tricks: GzTrickRecord[];
+  taken: Card[][];
+  cards_left: number[];
+  result: GzResult | null;
+  seq: number;
+  turn_seq: number;
+}
+
+export interface GongzhuPlayerGame extends GongzhuPublicGame {
+  seat: number;
+  hand: Card[];
+  legal?: { phase: 'expose'; exposable: Card[] } | { phase: 'playing'; cards: Card[] };
+}
+
+export interface GongzhuReplay extends GongzhuPublicGame {
+  seed: string;
+  initial_hands: Card[][];
+  events: WsEvent[];
+}
+
+export type AnyPublicGame = PublicGame | HoldemPublicGame | GuandanPublicGame | GongzhuPublicGame;
+export type AnyReplay = Replay | HoldemReplay | GuandanReplay | GongzhuReplay;
 
 export function isGuandanGame(g: object | null | undefined): boolean {
   return !!g && (g as { game?: unknown }).game === 'guandan';
+}
+
+export function isGongzhuGame(g: object | null | undefined): boolean {
+  return !!g && (g as { game?: unknown }).game === 'gongzhu';
 }
 
 export function isHoldemGame(g: object | null | undefined): boolean {
@@ -295,8 +380,8 @@ export interface GameSummary {
   game?: GameType;
   players?: Player[];
   landlord?: number | null;
-  /** GameResult for ddz / ddz4, HoldemResult for holdem, GdResult for guandan. */
-  result?: GameResult | HoldemResult | GdResult | null;
+  /** GameResult for ddz / ddz4, HoldemResult for holdem, GdResult for guandan, GzResult for gongzhu. */
+  result?: GameResult | HoldemResult | GdResult | GzResult | null;
   phase?: Phase;
   started_at?: number | string;
   finished_at?: number | string;
@@ -385,6 +470,9 @@ const ERROR_TEXT: Record<string, string> = {
   BAD_AMOUNT: '加注额不合法',
   PATTERN_MISMATCH: '这些牌不能按所选牌型出',
   BAD_RETURN: '只能还 2–10 的牌（不能还王和逢人配）',
+  MUST_FOLLOW_SUIT: '有领出的花色就必须跟这门花色',
+  EXPOSED_CARD_LOCKED: '亮出的牌在这门花色第一轮不能出',
+  BAD_EXPOSE: '只能亮手里的 ♠Q / ♦J / ♣10 / ♥A',
 };
 
 /** Human-readable Chinese text for an error, keeping the server message for detail. */
@@ -459,7 +547,7 @@ export const api = {
     request<{ room: Room }>('POST', `/rooms/${encodeURIComponent(rid)}/ready`, { token, body: { ready } }),
 
   game: (gid: string) => request<PublicGame>('GET', `/games/${encodeURIComponent(gid)}`),
-  gameState: (token: string, gid: string) => request<PlayerGame | HoldemPlayerGame | GuandanPlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
+  gameState: (token: string, gid: string) => request<PlayerGame | HoldemPlayerGame | GuandanPlayerGame | GongzhuPlayerGame>('GET', `/games/${encodeURIComponent(gid)}/state`, { token }),
   bid: (token: string, gid: string, score: number, seq?: number) =>
     request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/bid`, { token, body: { score, seq } }),
   /** `pattern` (guandan only) picks one interpretation when the cards can be read several ways. */
@@ -468,6 +556,12 @@ export const api = {
       token,
       body: { cards, seq, ...(pattern ? { pattern } : {}) },
     }),
+  /** Gongzhu: expose some of QS / JD / TC / AH (`[]` = 不亮). */
+  expose: (token: string, gid: string, cards: Card[], seq?: number) =>
+    request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/expose`, { token, body: { cards, seq } }),
+  /** Gongzhu: play one card. */
+  playCard: (token: string, gid: string, card: Card, seq?: number) =>
+    request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/play`, { token, body: { card, seq } }),
   /** Guandan: give one card back to the tribute payer (还贡). */
   returnCard: (token: string, gid: string, card: Card, seq?: number) =>
     request<{ ok: true; seq: number }>('POST', `/games/${encodeURIComponent(gid)}/return`, { token, body: { card, seq } }),

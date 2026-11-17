@@ -7,6 +7,8 @@ import {
   type Card,
   type GameResult,
   type GameType,
+  type GongzhuPublicGame,
+  type GongzhuReplay,
   type GuandanPublicGame,
   type GuandanReplay,
   type HoldemLegal,
@@ -20,9 +22,11 @@ import {
   type Room,
   type WsEvent,
   gameTypeOf,
+  isGongzhuGame,
   isGuandanGame,
   isHoldemGame,
 } from './api.ts';
+import { type GongzhuView, applyGongzhuEvent, buildGongzhuReplayStates, gongzhuFromSnapshot } from './gongzhuState.ts';
 import { type GuandanView, applyGuandanEvent, buildGuandanReplayStates, guandanFromSnapshot } from './guandanState.ts';
 import { type HoldemView, applyHoldemEvent, buildHoldemReplayStates, holdemFromSnapshot } from './holdemState.ts';
 
@@ -82,6 +86,8 @@ export interface TableState {
   holdem: HoldemView | null;
   /** Guandan hand. */
   guandan: GuandanView | null;
+  /** Gongzhu hand. */
+  gongzhu: GongzhuView | null;
   /** Last applied event seq (0 = unknown). */
   seq: number;
   /** bot_id of the viewer, to place `game.started.hand`. */
@@ -94,6 +100,7 @@ export const emptyTable = (viewer: string | null = null): TableState => ({
   game: null,
   holdem: null,
   guandan: null,
+  gongzhu: null,
   seq: 0,
   viewer,
 });
@@ -101,7 +108,7 @@ export const emptyTable = (viewer: string | null = null): TableState => ({
 const fill = <T,>(n: number, v: T): T[] => Array.from({ length: n }, () => v);
 
 /** Seats of a Dou Dizhu game type. */
-export const ddzSeats = (t: GameType): number => (t === 'ddz4' || t === 'guandan' ? 4 : 3);
+export const ddzSeats = (t: GameType): number => (t === 'ddz4' || t === 'guandan' || t === 'gongzhu' ? 4 : 3);
 /** Cards dealt per player (before the bottom). */
 export const ddzHandSize = (n: number): number => (n === 4 ? 25 : 17);
 /** Bottom cards. */
@@ -209,8 +216,12 @@ export interface OwnView {
 
 export function tableFromSnapshot(room: Room | null, game: AnyPublicGame | null, viewer: string | null, now: number, own?: OwnView): TableState {
   const gameType: GameType = room?.game ? gameTypeOf(room.game) : isHoldemGame(game) ? 'holdem' : gameTypeOf(game?.game);
-  const base: TableState = { room, gameType, game: null, holdem: null, guandan: null, seq: game?.seq ?? 0, viewer };
+  const base: TableState = { room, gameType, game: null, holdem: null, guandan: null, gongzhu: null, seq: game?.seq ?? 0, viewer };
   if (!game) return base;
+  if (gameType === 'gongzhu') {
+    const ownHand = own && own.hand ? { seat: own.seat, hand: own.hand } : undefined;
+    return { ...base, gongzhu: gongzhuFromSnapshot(game as GongzhuPublicGame, now, ownHand) };
+  }
   if (gameType === 'guandan') {
     const ownHand = own && own.hand ? { seat: own.seat, hand: own.hand } : undefined;
     return { ...base, guandan: guandanFromSnapshot(game as GuandanPublicGame, now, ownHand) };
@@ -235,6 +246,11 @@ export function applyEvent(state: TableState, ev: WsEvent, now: number): TableSt
   if (ev.type === 'room.updated') {
     if (!d.room) return s;
     return { ...s, room: d.room, gameType: d.room.game ? gameTypeOf(d.room.game) : s.gameType };
+  }
+  if (state.gameType === 'gongzhu') {
+    const roomSeatOf = (id: string) => state.room?.seats.findIndex((x) => x?.bot_id === id) ?? -1;
+    const v = applyGongzhuEvent(state.gongzhu, ev, seq, now, { viewer: state.viewer, roomSeatOf });
+    return v === state.gongzhu && ev.type !== 'game.started' ? s : { ...s, gongzhu: v };
   }
   if (state.gameType === 'guandan') {
     const roomSeatOf = (id: string) => state.room?.seats.findIndex((x) => x?.bot_id === id) ?? -1;
@@ -364,7 +380,7 @@ export function clockLeft(g: GameView, now: number): number | null {
 
 /** game_id of the current game of any type. */
 export function currentGameId(state: TableState): string | null {
-  return state.game?.game_id ?? state.holdem?.game_id ?? state.guandan?.game_id ?? null;
+  return state.game?.game_id ?? state.holdem?.game_id ?? state.guandan?.game_id ?? state.gongzhu?.game_id ?? null;
 }
 
 /** Display name for a seat, preferring the live room, then the game players. */
@@ -374,6 +390,7 @@ export function seatName(state: TableState, seat: number): string {
     state.game?.players.find((p) => p.seat === seat)?.name ??
     state.holdem?.players.find((p) => p.seat === seat)?.name ??
     state.guandan?.players.find((p) => p.seat === seat)?.name ??
+    state.gongzhu?.players.find((p) => p.seat === seat)?.name ??
     `座位 ${seat}`
   );
 }
@@ -382,6 +399,9 @@ const REPLAY_SKIP = new Set(['hello', 'room.updated', 'resync', 'pong', 'reply']
 
 /** Reconstructs every intermediate table state by replaying the events from the initial deal. */
 export function buildReplayStates(rep0: AnyReplay): TableState[] {
+  if (isGongzhuGame(rep0)) {
+    return buildGongzhuReplayStates(rep0 as GongzhuReplay).map((v, i) => ({ ...emptyTable(), gameType: 'gongzhu', gongzhu: v, seq: i }));
+  }
   if (isGuandanGame(rep0)) {
     return buildGuandanReplayStates(rep0 as GuandanReplay).map((v, i) => ({ ...emptyTable(), gameType: 'guandan', guandan: v, seq: i }));
   }

@@ -203,16 +203,19 @@ paths:
         - { name: bot_id, in: query, schema: { type: string } }
         - { name: game, in: query, schema: { $ref: '#/components/schemas/GameType' } }
         - { name: room_id, in: query, schema: { type: string }, description: Only games played in this room }
+        - { name: before, in: query, schema: { type: string }, description: 'Paging: only games that finished before this game id (pass `next` from the previous page)' }
       responses:
         '200':
-          description: Recently finished games, newest first
+          description: Finished games, newest first
           content:
             application/json:
               schema:
                 type: object
-                required: [games]
+                required: [games, next]
                 properties:
                   games: { type: array, items: { $ref: '#/components/schemas/GameSummary' } }
+                  next: { type: [string, 'null'], description: 'Pass as `before` for the next page; null on the last page' }
+        '400': { $ref: '#/components/responses/Error' }
   /games/{gid}:
     parameters: [{ $ref: '#/components/parameters/gid' }]
     get:
@@ -293,8 +296,10 @@ paths:
             schema:
               type: object
               required: [cards]
+              description: 'Gongzhu: exactly one card in cards (or send {"card": "5S"} instead)'
               properties:
                 cards: { $ref: '#/components/schemas/Cards' }
+                card: { $ref: '#/components/schemas/Card' }
                 pattern:
                   type: object
                   description: Optional hint when the cards can be read as several patterns
@@ -350,7 +355,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/rid' }]
     post:
       operationId: inviteSmartBots
-      summary: 'Ask the server''s smart-bot service to fill empty seats (caller must be seated in the room; ddz, ddz4 and guandan; at most 4 busy bots per game type)'
+      summary: 'Ask the server''s smart-bot service to fill empty seats (caller must be seated in the room; ddz, ddz4, guandan and gongzhu; at most 4 busy bots per game type)'
       requestBody:
         content:
           application/json:
@@ -399,6 +404,30 @@ paths:
               required: [card]
               properties:
                 card: { $ref: '#/components/schemas/Card' }
+                seq: { type: integer, description: seq of the turn event you are answering }
+      responses:
+        '200': { $ref: '#/components/responses/ActionOk' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /games/{gid}/expose:
+    parameters: [{ $ref: '#/components/parameters/gid' }]
+    post:
+      operationId: gongzhuExpose
+      summary: 'Gongzhu only: expose (亮牌) any of QS / JD / TC / AH in your hand; an empty list exposes nothing'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cards]
+              properties:
+                cards: { $ref: '#/components/schemas/Cards' }
                 seq: { type: integer, description: seq of the turn event you are answering }
       responses:
         '200': { $ref: '#/components/responses/ActionOk' }
@@ -477,7 +506,7 @@ components:
     Name: { type: string, pattern: '^[\p{L}\p{N}_-]{1,24}$' }
     Kind: { type: string, enum: [bot, human] }
     Seat: { type: integer, minimum: 0, maximum: 5, description: '0-2 for ddz, 0-3 for ddz4, 0..seats-1 for holdem' }
-    GameType: { type: string, enum: [ddz, ddz4, holdem, guandan], default: ddz, description: "ddz = 3-player Dou Dizhu, ddz4 = 4-player Dou Dizhu, holdem = No-Limit Texas Hold'em, guandan = Guandan (4 players, two teams)" }
+    GameType: { type: string, enum: [ddz, ddz4, holdem, guandan, gongzhu], default: ddz, description: "ddz = 3-player Dou Dizhu, ddz4 = 4-player Dou Dizhu, holdem = No-Limit Texas Hold'em, guandan = Guandan (4 players, two teams), gongzhu = Gongzhu / Chinese Hearts (4 players)" }
     Card:
       type: string
       description: Rank 3456789TJQKA2 + suit SHCD; BJ = small joker, RJ = big joker
