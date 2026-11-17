@@ -227,10 +227,15 @@ function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) 
             )}
             {info && <span>积分 {info.score}</span>}
           </div>
-          {taken.length > 0 && (
+          {/* Always there during a hand, so the seat does not grow when the first scoring card is taken. */}
+          {v && (
             <div className="gz-taken" aria-label="已收的分牌">
-              <span className="gz-taken-label">收</span>
-              <Hand cards={taken} size="xs" spread={0.45} />
+              {taken.length > 0 && (
+                <>
+                  <span className="gz-taken-label">收</span>
+                  <Hand cards={taken} size="xs" spread={0.45} />
+                </>
+              )}
             </div>
           )}
         </div>

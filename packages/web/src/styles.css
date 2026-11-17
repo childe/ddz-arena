@@ -2131,6 +2131,38 @@ select {
 .gz-info {
   gap: 6px;
 }
+/* Fixed heights above the player's hand, so the hand stays put while trick cards, tags, chips,
+   the countdown and the controls come and go. */
+.gz-info .chips {
+  height: 40px;
+  overflow: hidden;
+  align-content: flex-start;
+}
+.gz-info .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gz-table .play-slot {
+  height: calc(var(--ch-md) + 24px);
+  min-height: 0;
+}
+.gz-table .seat-main .avatar-wrap {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gz-table .seat-main .seat-stats {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+/* As tall as the expose buttons, which hold a small card. */
+.gz-seat .controls {
+  min-height: calc(var(--ch-xs) + 14px);
+}
 .gz-table .center-plays-top > .play-slot {
   flex: 1;
 }
@@ -2177,6 +2209,8 @@ select {
   min-width: 0;
   max-width: 100%;
   margin-top: 2px;
+  height: var(--ch-xs);
+  overflow: hidden;
 }
 .gz-taken .hand-rows {
   flex: 1;
