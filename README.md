@@ -1,8 +1,8 @@
 # 斗地主 Bot 对战平台
 
-供程序自动对战的棋牌服务，支持三人斗地主、四人斗地主、无限注德州扑克和掼蛋：服务端负责发牌、判定规则、计时和计分；参赛程序通过 HTTP + WebSocket 接入；真人可以在网页上围观、看回放，也可以下场和 bot 打。
+供程序自动对战的棋牌服务，支持三人斗地主、四人斗地主、无限注德州扑克、掼蛋和拱猪：服务端负责发牌、判定规则、计时和计分；参赛程序通过 HTTP + WebSocket 接入；真人可以在网页上围观、看回放，也可以下场和 bot 打。
 
-- 设计方案：[docs/design.md](docs/design.md)，多游戏扩展：[docs/multigame.md](docs/multigame.md)，掼蛋：[docs/guandan.md](docs/guandan.md)
+- 设计方案：[docs/design.md](docs/design.md)，多游戏扩展：[docs/multigame.md](docs/multigame.md)，掼蛋：[docs/guandan.md](docs/guandan.md)，拱猪：[docs/gongzhu.md](docs/gongzhu.md)
 - 接口文档：[docs/api.md](docs/api.md)（服务运行后网页上的「接口文档」页也是这份）
 - Python SDK 与示例 bot：[sdk/python](sdk/python)
 
@@ -56,9 +56,9 @@ deploy/deploy.sh tt
 
 脚本在本地构建前端，用 rsync 同步到 `tt:/opt/ddz`，安装运行时依赖，然后安装并重启 systemd 服务 `ddz`。第一次部署会生成 `/etc/ddz.env`，其中包含随机生成的邀请码。
 
-演示桌 `ddz-demo` 是另一个 systemd 服务，运行 `deploy/demo.mjs`：每种游戏各开一桌（「三机演示」「四人斗地主演示」「德州扑克演示」「掼蛋演示」），bot 无限对局，每步停 1.5 秒（`DDZ_DEMO_PAUSE_MS`），服务端重启后自动重建房间。三人斗地主、四人斗地主、掼蛋三桌各有一个座位留给智能 bot：演示脚本通过补位接口邀请 `ddz-bots` 的智能 bot 入座，占用该游戏 4 个智能 bot 中的 1 个；`ddz-bots` 没运行时这个座位空着，每 20 秒重试一次。用 `ssh tt sudo systemctl enable --now ddz-demo` 启用一次，之后每次部署会自动重启它；用 `disable --now` 停用。
+演示桌 `ddz-demo` 是另一个 systemd 服务，运行 `deploy/demo.mjs`：每种游戏各开一桌（「三机演示」「四人斗地主演示」「德州扑克演示」「掼蛋演示」「拱猪演示」），bot 无限对局，每步停 1.5 秒（`DDZ_DEMO_PAUSE_MS`），服务端重启后自动重建房间。三人斗地主、四人斗地主、掼蛋、拱猪四桌各有一个座位留给智能 bot：演示脚本通过补位接口邀请 `ddz-bots` 的智能 bot 入座，占用该游戏 4 个智能 bot 中的 1 个；`ddz-bots` 没运行时这个座位空着，每 20 秒重试一次。用 `ssh tt sudo systemctl enable --now ddz-demo` 启用一次，之后每次部署会自动重启它；用 `disable --now` 停用。
 
-智能 bot 服务 `ddz-bots` 运行 `sdk/python/smart/service.py`：三人斗地主、四人斗地主、掼蛋各有 4 个智能 bot，玩家在房间里点「智能 bot 补位」时派 bot 入座，房间里只剩 bot 时自动离开。它和服务端通过 `/etc/ddz.env` 里的 `DDZ_BOT_SERVICE_KEY` 认证，部署脚本会自动生成这个密钥、安装 `python3-websocket` 并启用服务。
+智能 bot 服务 `ddz-bots` 运行 `sdk/python/smart/service.py`：三人斗地主、四人斗地主、掼蛋、拱猪各有 4 个智能 bot，玩家在房间里点「智能 bot 补位」时派 bot 入座，房间里只剩 bot 时自动离开。它和服务端通过 `/etc/ddz.env` 里的 `DDZ_BOT_SERVICE_KEY` 认证，部署脚本会自动生成这个密钥、安装 `python3-websocket` 并启用服务。
 
 常用运维命令：
 

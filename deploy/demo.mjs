@@ -1,5 +1,5 @@
 // Endless demo tables: one room per game type ("三机演示" for 3-player Dou Dizhu, "四人斗地主演示",
-// "德州扑克演示", "掼蛋演示") where bots play forever, pausing before each action so humans can follow along in
+// "德州扑克演示", "掼蛋演示", "拱猪演示") where bots play forever, pausing before each action so humans can follow along in
 // the web UI. Runs next to the server (deploy/ddz-demo.service).
 //
 //   DDZ_DEMO_BASE=http://127.0.0.1:8080 DDZ_INVITE_CODE=... node deploy/demo.mjs   (defaults to 127.0.0.1:$PORT)
@@ -42,6 +42,13 @@ const TABLES = [
     bots: [
       { name: '掼蛋-贪心A', style: 'greedy' }, { smart: true },
       { name: '掼蛋-贪心C', style: 'greedy' }, { name: '掼蛋-随机D', style: 'random' },
+    ],
+  },
+  {
+    key: 'gongzhu', game: 'gongzhu', room: '拱猪演示',
+    bots: [
+      { name: '拱猪-贪心A', style: 'greedy' }, { smart: true },
+      { name: '拱猪-贪心C', style: 'greedy' }, { name: '拱猪-随机D', style: 'random' },
     ],
   },
 ];
@@ -167,6 +174,32 @@ function guandanReturn(st, cards) {
   return [...cards].sort((a, b) => cardValue(a, st.level) - cardValue(b, st.level))[0];
 }
 
+// ---------- Gongzhu strategy ----------
+
+const GZ_RANKS = '23456789TJQKA';
+const gzRank = (c) => GZ_RANKS.indexOf(c[0]);
+const gzBad = (c) => c === 'QS' || c[1] === 'H';
+
+function gongzhuCard(style, st, cards) {
+  if (style === 'random') return cards[Math.floor(Math.random() * cards.length)];
+  const plays = st.trick?.plays ?? [];
+  const byRank = [...cards].sort((a, b) => gzRank(a) - gzRank(b));
+  // Lead the lowest card, hearts last.
+  if (!plays.length) return byRank.find((c) => c[1] !== 'H') ?? byRank[0];
+  const led = plays[0].card[1];
+  // Void in the led suit: dump the pig, then the highest heart, then the highest card.
+  if (cards[0][1] !== led) {
+    if (cards.includes('QS')) return 'QS';
+    return [...byRank].reverse().find((c) => c[1] === 'H') ?? byRank.at(-1);
+  }
+  // Follow: the highest card that still loses; else, as last player on a clean trick, the highest; else the lowest.
+  const top = Math.max(...plays.filter((p) => p.card[1] === led).map((p) => gzRank(p.card)));
+  const under = byRank.filter((c) => gzRank(c) < top && c !== 'JD');
+  if (under.length) return under.at(-1);
+  if (plays.length === 3 && !plays.some((p) => gzBad(p.card))) return byRank.findLast((c) => c !== 'QS') ?? byRank.at(-1);
+  return byRank.find((c) => c !== 'QS') ?? byRank[0];
+}
+
 // ---------- Hold'em strategy ----------
 
 const HOLDEM_RANKS = '23456789TJQKA';
@@ -240,7 +273,7 @@ class DemoBot {
     if (ev.type === 'game.finished' && this === this.table.bots[0]) {
       const r = ev.data.result;
       const scores = Array.isArray(r.scores) ? r.scores.map((x) => x ?? '-').join(',') : '';
-      const what = r.kind ?? (r.winner_team !== undefined ? `team${r.winner_team}+${r.upgrade}@${r.level}` : (r.showdown?.[0]?.rank ?? 'fold'));
+      const what = r.kind ?? (r.points ? `points=${r.points.join(',')}` : null) ?? (r.winner_team !== undefined ? `team${r.winner_team}+${r.upgrade}@${r.level}` : (r.showdown?.[0]?.rank ?? 'fold'));
       log(`${this.table.key} ${ev.game_id}: ${what} scores=${scores}`);
     }
   }
@@ -269,7 +302,10 @@ class DemoBot {
     const st = (await api('GET', `/games/${gid}/state`, this.token)).data;
     if (!st || st.turn !== this.seat) return;
     let r;
-    if (st.game === 'guandan') {
+    if (st.game === 'gongzhu') {
+      if (st.phase === 'expose') r = await api('POST', `/games/${gid}/expose`, this.token, { cards: [], seq: st.seq });
+      else if (st.phase === 'playing') r = await api('POST', `/games/${gid}/play`, this.token, { card: gongzhuCard(this.style, st, st.legal?.cards ?? []), seq: st.seq });
+    } else if (st.game === 'guandan') {
       const legal = (await api('GET', `/games/${gid}/legal-moves`, this.token)).data;
       if (st.phase === 'return') {
         r = await api('POST', `/games/${gid}/return`, this.token, { card: guandanReturn(st, legal.return_cards ?? []), seq: st.seq });

@@ -4,20 +4,21 @@ Usage:
     python examples/run_table.py --base http://localhost:8080 --game ddz    --games 5
     python examples/run_table.py --base http://localhost:8080 --game ddz4   --games 3
     python examples/run_table.py --base http://localhost:8080 --game guandan --games 5
+    python examples/run_table.py --base http://localhost:8080 --game gongzhu --games 5
     python examples/run_table.py --base http://localhost:8080 --game holdem --players 6 --games 20
     options: [--invite CODE] [--bots greedy,random,...] [--timeout-ms 20000] [--chaos 2]
              [--strict] [-v]
 
-``--players`` defaults to the table size (ddz 3, ddz4 4, guandan 4, holdem 6; holdem allows
-2-6). ``--bots`` lists strategies, cycled over the seats: ddz/ddz4 ``greedy`` / ``random``
+``--players`` defaults to the table size (ddz 3, ddz4 4, guandan 4, gongzhu 4, holdem 6;
+holdem allows 2-6). ``--bots`` lists strategies, cycled over the seats: ddz/ddz4 ``greedy`` / ``random``
 (default ``greedy,greedy,random``), guandan ``greedy`` / ``random`` (default ``greedy,random``:
-team 0 greedy, team 1 random), holdem ``simple`` / ``random`` (default ``simple``).
+team 0 greedy, team 1 random), gongzhu ``greedy`` / ``random`` (default ``greedy``), holdem ``simple`` / ``random`` (default ``simple``).
 
 All bots are seated before anybody readies, so the first game starts with the full table.
 Prints one line per finished game, then per-bot SDK stats, the room scores and the leaderboard
 rows of these bots. At every game end each bot's tracked state is compared with what the server
-reveals (Dou Dizhu: remaining hand; Guandan: hand in GET /games/{gid}/state; Hold'em: own
-showdown score via ddz_sdk.holdem.evaluate). Every Guandan hand of a match counts as one game.
+reveals (Dou Dizhu and Gongzhu: remaining hand; Guandan: hand in GET /games/{gid}/state; Hold'em: own
+showdown score via ddz_sdk.holdem.evaluate). Every Guandan or Gongzhu hand of a match counts as one game.
 Exit code is non-zero if a bot stalled or crashed; with ``--strict`` also if any bot used a
 fallback, hit a handler error, the server acted for it (``auto``) or a state check failed.
 """
@@ -46,6 +47,7 @@ from ddz_sdk import (  # noqa: E402
 )
 from ddz_sdk.cards import sort_cards  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
+from gongzhu_bot import GreedyGongzhuBot, RandomGongzhuBot  # noqa: E402
 from guandan_bot import GreedyGuandanBot, RandomGuandanBot  # noqa: E402
 from holdem_bot import RandomHoldemBot, SimpleHoldemBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
@@ -54,12 +56,14 @@ KINDS = {
     "ddz": {"greedy": GreedyBot, "random": RandomBot},
     "holdem": {"simple": SimpleHoldemBot, "random": RandomHoldemBot},
     "guandan": {"greedy": GreedyGuandanBot, "random": RandomGuandanBot},
+    "gongzhu": {"greedy": GreedyGongzhuBot, "random": RandomGongzhuBot},
 }
 KINDS["ddz4"] = KINDS["ddz"]
 DEFAULT_BOTS = {"ddz": "greedy,greedy,random", "ddz4": "greedy,greedy,random"}
 DEFAULT_BOTS["holdem"] = "simple"
 DEFAULT_BOTS["guandan"] = "greedy,random"
-TABLE = {"ddz": 3, "ddz4": 4, "guandan": 4}
+DEFAULT_BOTS["gongzhu"] = "greedy"
+TABLE = {"ddz": 3, "ddz4": 4, "guandan": 4, "gongzhu": 4}
 
 
 class Reporter:
@@ -102,6 +106,21 @@ class Reporter:
                         r.get("team_levels_before"),
                         r.get("team_levels_after"),
                         r.get("match_winner"),
+                        r.get("scores"),
+                    )
+                )
+            elif self.game == "gongzhu":
+                line = (
+                    "hand %3d: points=%s totals=%s pig=%s exposed=%s "
+                    "all_hearts=%s match_over=%s scores=%s"
+                    % (
+                        n,
+                        r.get("points"),
+                        r.get("totals_after"),
+                        r.get("pig"),
+                        r.get("exposed"),
+                        r.get("all_hearts"),
+                        r.get("match_over"),
                         r.get("scores"),
                     )
                 )
@@ -164,7 +183,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8080")
     ap.add_argument(
-        "--game", choices=["ddz", "ddz4", "guandan", "holdem"], default="ddz"
+        "--game",
+        choices=["ddz", "ddz4", "guandan", "gongzhu", "holdem"],
+        default="ddz",
     )
     ap.add_argument("--players", type=int, default=None)
     ap.add_argument("--games", type=int, default=5)

@@ -171,6 +171,26 @@ describe('GongzhuGame', () => {
     expect(g.legalCards()).toEqual(['QS']);
   });
 
+  it('an exposed card may be discarded before its suit is led', () => {
+    const deal: GzHands = [
+      c('QS 2S 3S 2C 3C 4C 5C 6C 7C 8C 9C TC JC'),
+      c('2H 3H 4H 5H 6H 7H 8H 9H TH JH QH KH AH'),
+      c('4S 5S 6S 7S 8S 9S TS JS KS AS QC KC AC'),
+      c('2D 3D 4D 5D 6D 7D 8D 9D TD JD QD KD AD'),
+    ];
+    const g = new GongzhuGame('s', { handNo: 2, totals: [0, 0, 0, 0], leader: 1 }, deal);
+    g.expose(1, []);
+    g.expose(2, []);
+    g.expose(3, []);
+    g.expose(0, ['QS']);
+    g.play(1, '2H');
+    g.play(2, '4S');
+    g.play(3, '2D');
+    expect(g.legalCards()).toContain('QS');
+    g.play(0, 'QS');
+    expect(g.taken[1]).toEqual(['2H', 'QS']);
+  });
+
   it('ends early once every scoring card is taken', () => {
     const g = new GongzhuGame('s', { handNo: 2, totals: [0, 0, 0, 0], leader: 1 }, bySuit());
     for (const s of [1, 2, 3, 0] as GzSeat[]) g.expose(s, []);

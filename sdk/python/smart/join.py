@@ -1,7 +1,7 @@
 """Seat N smart bots in an existing Dou Dizhu room and keep them playing until Ctrl+C.
 
 The room's game type picks the strategy: ``ddz`` -> Smart3Bot, ``ddz4`` -> Smart4Bot,
-``guandan`` -> SmartGuandanBot.
+``guandan`` -> SmartGuandanBot, ``gongzhu`` -> SmartGongzhuBot.
 Bots come from a fixed pool (智能A, 智能B, ...); each is registered once and its token kept
 in ``smart/tokens.json`` (name -> {base url: token}). Bots already seated in another room
 are skipped, so the same pool can serve several rooms at once.
@@ -29,14 +29,21 @@ from ddz_sdk import Client, register_bot  # noqa: E402
 from smart3_bot import Smart3Bot  # noqa: E402
 from smart4_bot import Smart4Bot  # noqa: E402
 from smart_gd_bot import SmartGuandanBot  # noqa: E402
+from smart_gz_bot import SmartGongzhuBot  # noqa: E402
 
 TOKENS = HERE / "tokens.json"
 POOL = ["智能" + c for c in "ABCDEFGH"]
-STRATEGY = {"ddz": Smart3Bot, "ddz4": Smart4Bot, "guandan": SmartGuandanBot}
+STRATEGY = {
+    "ddz": Smart3Bot,
+    "ddz4": Smart4Bot,
+    "guandan": SmartGuandanBot,
+    "gongzhu": SmartGongzhuBot,
+}
 
 
 def paused(cls, pause: float):
-    """Subclass of ``cls`` that waits ``pause`` seconds before each bid / play."""
+    """Subclass of ``cls`` that waits ``pause`` seconds before each bid / play (and each
+    Gongzhu expose / card)."""
 
     class Paused(cls):
         def on_bid(self, state):
@@ -50,6 +57,14 @@ def paused(cls, pause: float):
         def on_return(self, state):
             time.sleep(pause)
             return super().on_return(state)
+
+        def choose_expose(self, state):
+            time.sleep(pause)
+            return super().choose_expose(state)
+
+        def choose_card(self, state):
+            time.sleep(pause)
+            return super().choose_card(state)
 
     return Paused
 
@@ -91,7 +106,7 @@ def main() -> None:
     room = Client(args.base).get_room(args.room)["room"]
     if room.get("game") not in STRATEGY:
         raise SystemExit(
-            "room %s is %s; smart bots play ddz / ddz4 / guandan"
+            "room %s is %s; smart bots play ddz / ddz4 / guandan / gongzhu"
             % (args.room, room.get("game"))
         )
     cls = paused(STRATEGY[room["game"]], args.pause_ms / 1000)

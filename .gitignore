@@ -1,6 +1,7 @@
 node_modules
 dist
 data
+!sdk/python/tests/data
 *.db
 __pycache__
 .venv

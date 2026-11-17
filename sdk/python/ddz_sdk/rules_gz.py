@@ -7,11 +7,9 @@ highest, and suits never beat each other (no trumps).
 
 * Follow suit when you can; otherwise play anything. The highest card of the led suit wins the
   trick and its scoring cards.
-* Exposed cards (亮牌: ``QS`` / ``JD`` / ``TC`` / ``AH``) may not be played before their suit
-  has been led in an earlier trick -- not as the lead, not following and not as a discard --
-  unless it is the only card of that suit in hand. (The engine's ``legalCards()`` currently
-  lists an exposed card as a discard while ``play()`` refuses it with ``EXPOSED_CARD_LOCKED``;
-  :func:`legal_cards` follows ``play()``, so every card it returns is accepted.)
+* Exposed cards (亮牌: ``QS`` / ``JD`` / ``TC`` / ``AH``) may not be led or played to follow
+  suit in the first round of their suit, unless it is the only card of that suit in hand.
+  Discarding one on another suit's trick is always allowed.
 * :func:`score_taken` / :func:`settle` score a hand exactly like the engine's ``scoreTaken`` /
   ``settleGz``.
 
@@ -122,13 +120,15 @@ def legal_cards(
     ``led_suit`` is the suit led in the current trick (None when you lead), ``exposed`` your own
     exposed cards and ``led_before`` the suits led in completed tricks. With cards of the led
     suit you must play one of them; otherwise any card. Exposed cards are locked (see
-    :func:`is_locked`).
+    :func:`is_locked`) when leading or following suit, never when discarding.
     """
-    pool = list(hand)
     if led_suit is not None:
-        follow = [c for c in pool if c[1] == led_suit]
-        if follow:
-            pool = follow
+        follow = [c for c in hand if c[1] == led_suit]
+        if not follow:
+            return list(hand)
+        pool = follow
+    else:
+        pool = list(hand)
     return [c for c in pool if not is_locked(c, hand, exposed, led_before)]
 
 
@@ -152,7 +152,8 @@ def check_play(
         and any(c[1] == led_suit for c in hand)
     ):
         raise RuleError("MUST_FOLLOW_SUIT", "you must follow suit %s" % led_suit)
-    if is_locked(card, hand, exposed, led_before):
+    discard = led_suit is not None and card[1] != led_suit
+    if not discard and is_locked(card, hand, exposed, led_before):
         raise RuleError(
             "EXPOSED_CARD_LOCKED",
             "exposed %s cannot be played in the first round of its suit" % card,

@@ -40,11 +40,22 @@ from join import paused  # noqa: E402
 from smart3_bot import Smart3Bot  # noqa: E402
 from smart4_bot import Smart4Bot  # noqa: E402
 from smart_gd_bot import SmartGuandanBot  # noqa: E402
+from smart_gz_bot import SmartGongzhuBot  # noqa: E402
 
 log = logging.getLogger("smart-bots")
 
-STRATEGY = {"ddz": Smart3Bot, "ddz4": Smart4Bot, "guandan": SmartGuandanBot}
-NAMES = {"ddz": "智能斗地主", "ddz4": "智能四人", "guandan": "智能掼蛋"}
+STRATEGY = {
+    "ddz": Smart3Bot,
+    "ddz4": Smart4Bot,
+    "guandan": SmartGuandanBot,
+    "gongzhu": SmartGongzhuBot,
+}
+NAMES = {
+    "ddz": "智能斗地主",
+    "ddz4": "智能四人",
+    "guandan": "智能掼蛋",
+    "gongzhu": "智能拱猪",
+}
 #: how often a seated bot checks whether anyone else is still in its room
 WATCH_S = 10
 

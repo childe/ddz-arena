@@ -1,9 +1,9 @@
-# ddz-sdk：斗地主 / 掼蛋 / 德州扑克 Bot 对战平台 Python SDK
+# ddz-sdk：斗地主 / 掼蛋 / 拱猪 / 德州扑克 Bot 对战平台 Python SDK
 
-平台支持四种游戏：三人斗地主（`ddz`）、四人斗地主（`ddz4`）、掼蛋（`guandan`）和无限注德州扑克（`holdem`）。用这个 SDK 写斗地主 bot，只需要实现两个方法：`on_bid`（叫几分）和 `on_play`（出什么牌），三人和四人用同一个 `Bot` 类；写掼蛋 bot 实现 `on_play`，需要时再实现 `on_return`（还贡还哪张）；写德州扑克 bot 只需要实现 `on_action`（弃牌、过牌、跟注还是加注）。连接、断线重连、入座、准备、状态跟踪、出错兜底都由 SDK 处理。
+平台支持五种游戏：三人斗地主（`ddz`）、四人斗地主（`ddz4`）、掼蛋（`guandan`）、拱猪（`gongzhu`）和无限注德州扑克（`holdem`）。用这个 SDK 写斗地主 bot，只需要实现两个方法：`on_bid`（叫几分）和 `on_play`（出什么牌），三人和四人用同一个 `Bot` 类；写掼蛋 bot 实现 `on_play`，需要时再实现 `on_return`（还贡还哪张）；写拱猪 bot 实现 `choose_card`（出哪张），需要时再实现 `choose_expose`（亮哪些牌）；写德州扑克 bot 只需要实现 `on_action`（弃牌、过牌、跟注还是加注）。连接、断线重连、入座、准备、状态跟踪、出错兜底都由 SDK 处理。
 
 - Python ≥ 3.9，唯一运行时依赖是 `websocket-client`，HTTP 用标准库 `urllib`。
-- `ddz_sdk.rules`（三人）和 `ddz_sdk.rules4`（四人）是服务端斗地主规则引擎的纯 Python 移植，`ddz_sdk.rules_gd` 是掼蛋规则的实现，都可以在本地判断牌型、生成合法出牌。正式比赛房间可能关闭 `/legal-moves` 接口，用它们就不依赖这个接口。`ddz_sdk.holdem` 是德州扑克 7 选 5 牌力评估的移植，分数和服务端摊牌结果里的 `score` 完全一致。
+- `ddz_sdk.rules`（三人）和 `ddz_sdk.rules4`（四人）是服务端斗地主规则引擎的纯 Python 移植，`ddz_sdk.rules_gd` 是掼蛋规则的实现，`ddz_sdk.rules_gz` 是拱猪规则和计分的移植，都可以在本地判断牌型、生成合法出牌。正式比赛房间可能关闭 `/legal-moves` 接口，用它们就不依赖这个接口。`ddz_sdk.holdem` 是德州扑克 7 选 5 牌力评估的移植，分数和服务端摊牌结果里的 `score` 完全一致。
 - 协议细节以 [`docs/api.md`](../../docs/api.md) 为准，第 8、9 节分别是四人斗地主和德州扑克。
 
 ## 安装
@@ -133,7 +133,7 @@ except ApiError as e:
     print(e.status, e.code, e.message, e.details)   # 例如 422 CANNOT_BEAT
 ```
 
-`Client` 为 api.md 里的每个 HTTP 接口都提供了一个方法：`register_bot`、`register_guest`、`me`、`list_rooms`、`create_room`、`get_room`、`quick_join`、`join_room`、`leave_room`、`ready`、`game_state`、`legal_moves`、`bid`、`play`（`pass_turn`）、`return_card`（掼蛋还贡）、`action`（德州扑克下注）、`get_game`、`replay`、`list_games`、`leaderboard`。非 2xx 响应抛出 `ApiError(status, code, message, details)`；网络错误的 `status` 为 0，`code` 为 `NETWORK_ERROR`。
+`Client` 为 api.md 里的每个 HTTP 接口都提供了一个方法：`register_bot`、`register_guest`、`me`、`list_rooms`、`create_room`、`get_room`、`quick_join`、`join_room`、`leave_room`、`ready`、`game_state`、`legal_moves`、`bid`、`play`（`pass_turn`）、`return_card`（掼蛋还贡）、`expose` 和 `play_card`（拱猪亮牌、出一张牌）、`action`（德州扑克下注）、`get_game`、`replay`、`list_games`、`leaderboard`。非 2xx 响应抛出 `ApiError(status, code, message, details)`；网络错误的 `status` 为 0，`code` 为 `NETWORK_ERROR`。
 
 和游戏类型有关的参数都是可选的，不传时等于 `ddz`，旧代码不用改：
 
@@ -144,6 +144,8 @@ c.leaderboard(game="holdem")                             # 德州扑克排行榜
 c.list_games(limit=20, game="ddz4")                      # 最近的四人斗地主对局
 c.quick_join(game="guandan")                             # 只进掼蛋房间
 c.return_card(game_id, "5S", seq=42)                     # 掼蛋还贡
+c.expose(game_id, ["QS"], seq=42)                        # 拱猪亮猪；[] 为不亮
+c.play_card(game_id, "5S", seq=43)                       # 拱猪出一张牌
 c.play(game_id, ["3S", "4S", "5S", "6S", "7H"], "straight", seq=43, pattern_rank="6")  # 指定解释
 c.list_games(limit=100, room_id="r_ab12cd")             # 某个房间的历史对局
 c.action(game_id, "raise", 12, seq=42)                   # 加注到本轮总额 12
@@ -261,6 +263,68 @@ legal_moves_gd(hand, state.to_beat_pattern, state.level)                # 能压
 同一牌型里 `main` 越大越强，所以 `min(moves, key=lambda m: m.pattern.main)` 能取到最小的出牌。`pattern.rank` 和 `pattern.to_api()` 给出 API 的 `{"type","rank","length"}`（`rank` 是 `"2"`…`"A"`、`"BJ"`、`"RJ"`，顺子类为最大一张）；从 API 转回来用 `GdPattern.from_api(d, level)`。炸弹类的大小用 `bomb_tier(p)` 比较：4 张炸弹 0 < 5 张 1 < 同花顺 2 < 6 张 3 < 7 张 4 < 8 张 5 < 天王炸 6。
 
 `legal_moves_gd` 把用 0、1、2 张逢人配的每种出法分别列出（如 `33` 和 `3 + 7H`），自然牌取花色最小的，同花顺用真实花色。27 张手牌含 2 张逢人配时，领出的合法出牌约 500–750 个，生成一次约 3 ms。
+
+## 拱猪（`gongzhu`）
+
+规则以 [`docs/gongzhu.md`](../../docs/gongzhu.md) 为准：4 人一副牌（没有王），每人 13 张，各自为战。有领出花色必须跟，最大的牌收走这一墩。16 张分牌：猪 `QS` −100、羊 `JD` +100、变压器 `TC`（自己其余分牌翻倍，单独时 +50）、红桃合计 −200（全红 +200）。出牌前每人可以亮 `QS` / `JD` / `TC` / `AH`，亮出的牌效果翻倍，并且在这门花色第一次被领出前不能出（手里只剩这一张时除外）。一场比赛有多局，累计到 −1000 结束，每局是一个 game。
+
+继承 `GongzhuBot`，实现 `choose_card`，需要时实现 `choose_expose`：
+
+```python
+from ddz_sdk import GongzhuBot, GongzhuState
+
+
+class MyGongzhuBot(GongzhuBot):
+    def choose_expose(self, state: GongzhuState):
+        return []                                    # state.exposable_cards() 的子集，[] 为不亮
+
+    def choose_card(self, state: GongzhuState) -> str:
+        legal = state.legal_cards()                  # 本地计算：跟花色、亮牌首轮限制
+        if state.leading:
+            return min(legal, key=lambda c: "23456789TJQKA".index(c[0]))
+        return legal[0]
+
+
+MyGongzhuBot().run("https://ddz.ohmycat.me", token)          # 快速入座拱猪
+# MyGongzhuBot().run(base, token, room_id="r_ab12cd")        # 加入指定的拱猪房间
+```
+
+示例 `examples/gongzhu_bot.py` 有两个策略：`GreedyGongzhuBot`（不亮牌；领出最短花色里最小的非分牌；跟牌时把猪塞给 `AS` / `KS`，能躲就用比当前最大牌小的最大一张；垫牌先垫猪，再垫最贵的红桃）和 `RandomGongzhuBot`（随机合法出牌）：
+
+```bash
+python examples/gongzhu_bot.py --base $BASE --token <你的token> [--strategy greedy|random] [--room r_xxx]
+```
+
+### `GongzhuState` 字段
+
+| 字段 | 含义 |
+|---|---|
+| `seat`、`hand` | 你的座位和手牌，按花色 S H C D、点数 2…A 排序 |
+| `phase` | `waiting` / `expose`（亮牌）/ `playing` / `finished` |
+| `hand_no`、`totals`、`first_leader` | 第几局、本局前的累计分、首出（也是第一个亮牌的人） |
+| `exposed`、`exposes_done` | 每个座位亮出的牌、已经做完亮牌决定的人数 |
+| `trick`、`trick_no` | 进行中的这一墩 `{"leader","plays":[{"seat","card"}],"winner"}`（没人出时为 `None`）、第几墩 |
+| `tricks`、`taken` | 已完成的墩（含 `winner`）、每人已收的分牌 |
+| `cards_left`、`result`、`turn`、`remaining_ms`、`game_id`、`room_id`、`seq` | 其他信息 |
+
+辅助方法和属性：`state.legal_cards()`、`state.exposable_cards()`、`state.leading`、`state.led_suit`、`state.plays`、`state.trick_cards`、`state.trick_winner()`、`state.winning_card()`、`state.led_before()`（已领出过的花色）、`state.my_exposed`、`state.all_exposed`、`state.played_cards()`、`state.unseen_cards()`（其他三家手里的牌）、`state.voids()`（每家已知缺的花色）、`state.scoring_out()`（还没被收走的分牌）、`state.points(seat)`（按已收的牌算的得分）。
+
+`GongzhuBot` 的生命周期与 `Bot` 相同。`turn` 事件的 `phase` 为 `expose` 时调用 `choose_expose`，为 `playing` 时调用 `choose_card`。兜底与服务端超时代打一致：钩子抛异常、返回值本地校验不合法，或服务端返回 422 时，亮牌阶段不亮；出牌阶段出可出牌中最小的一张，优先不是分牌的牌。
+
+### 规则库 `ddz_sdk.rules_gz`
+
+```python
+from ddz_sdk.rules_gz import legal_cards, check_play, trick_winner, score_taken, settle
+
+legal_cards(["5S", "QS", "AH", "3C"], "S", exposed=["QS"])   # ['5S']：亮出的猪在黑桃首轮不能出
+legal_cards(["5S", "QS", "AH", "3C"], "S", ["QS"], {"S"})    # ['5S', 'QS']：黑桃领出过以后可以出
+trick_winner([(0, "5S"), (1, "KS"), (2, "AH"), (3, "9S")])   # 1
+score_taken(["QS", "TC"], [])                                # -200
+score_taken([r + "H" for r in "23456789TJQKA"], ["AH"])      # 400：全红，亮了 AH
+settle(taken, exposed, totals)                               # 与 game.finished 的 result 相同
+```
+
+`check_play` 用服务端的错误码（`MUST_FOLLOW_SUIT`、`EXPOSED_CARD_LOCKED`、`CARDS_NOT_IN_HAND`、`UNKNOWN_CARD`）抛出 `RuleError`。亮出的牌在这门花色领出过之前，即使缺门垫牌也不能出（服务端出牌时也会拒绝），`legal_cards` 已经排除了这种情况。`tests/data/gen_gz_fixtures.ts` 用 TypeScript 引擎生成随机对局，测试逐步核对合法出牌、每墩赢家和结算。
 
 ## 德州扑克（`holdem`）
 

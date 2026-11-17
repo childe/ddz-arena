@@ -1,5 +1,6 @@
 """examples/run_table.py plus the smart strategies: ``smart3`` (ddz), ``smart4`` (ddz4) and
-``smart_gd`` (guandan).
+``smart_gd`` (guandan) and
+``smart_gz`` (gongzhu).
 
 Extra option ``--pause-ms N``: smart bots wait N ms before each bid / play, so humans can follow
 the game on the web page (the per-game timeout is raised to 600 s unless given).
@@ -22,6 +23,7 @@ import run_table  # noqa: E402
 from smart3_bot import Smart3Bot  # noqa: E402
 from smart4_bot import Smart4Bot  # noqa: E402
 from smart_gd_bot import SmartGuandanBot  # noqa: E402
+from smart_gz_bot import SmartGongzhuBot  # noqa: E402
 
 
 def pop_pause(argv):
@@ -55,6 +57,14 @@ def paused(cls):
             time.sleep(PAUSE)
             return super().on_return(state)
 
+        def choose_expose(self, state):
+            time.sleep(PAUSE)
+            return super().choose_expose(state)
+
+        def choose_card(self, state):
+            time.sleep(PAUSE)
+            return super().choose_card(state)
+
     return Paused if PAUSE else cls
 
 
@@ -63,6 +73,10 @@ run_table.KINDS["ddz4"] = {**run_table.KINDS["ddz4"], "smart4": paused(Smart4Bot
 run_table.KINDS["guandan"] = {
     **run_table.KINDS["guandan"],
     "smart_gd": paused(SmartGuandanBot),
+}
+run_table.KINDS["gongzhu"] = {
+    **run_table.KINDS["gongzhu"],
+    "smart_gz": paused(SmartGongzhuBot),
 }
 
 if __name__ == "__main__":

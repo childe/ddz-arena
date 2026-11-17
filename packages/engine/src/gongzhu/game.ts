@@ -234,7 +234,8 @@ export class GongzhuGame {
     if (led !== null && suitOf(card) !== led && hand.some((c) => suitOf(c) === led)) {
       throw new GameError('MUST_FOLLOW_SUIT', `you must follow suit ${led}`, { suit: led });
     }
-    if (this.locked(seat, card)) {
+    // Discarding on another suit's trick is never locked.
+    if ((led === null || suitOf(card) === led) && this.locked(seat, card)) {
       throw new GameError('EXPOSED_CARD_LOCKED', `exposed ${card} cannot be played in the first round of its suit`, { card });
     }
     if (!this.trick) this.trick = { leader: seat, plays: [], winner: null };

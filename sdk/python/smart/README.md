@@ -1,4 +1,4 @@
-# 智能 bot（三人斗地主 / 四人斗地主 / 掼蛋）
+# 智能 bot（三人斗地主 / 四人斗地主 / 掼蛋 / 拱猪）
 
 基于规则的智能 bot：拆牌、记牌、炸弹管理、叫分和队友配合。线上服务器用它们给玩家补位（房间里的「智能 bot 补位」按钮，见接口文档 7.3 节）；你也可以自己运行，拉进任意房间。命令都在 `sdk/python` 目录下执行，依赖与 SDK 相同（`websocket-client`）。
 
@@ -7,13 +7,14 @@
 | `smart3_bot.py` | 三人斗地主 bot `Smart3Bot` |
 | `smart4_bot.py` | 四人斗地主 bot `Smart4Bot` |
 | `smart_gd_bot.py` | 掼蛋 bot `SmartGuandanBot` |
-| `join.py` | 把智能 bot 拉进一个已有房间，按房间类型自动选 smart3、smart4 或 smart_gd |
-| `table.py` | `examples/run_table.py` 加上 `smart3` / `smart4` / `smart_gd`，注册一组新 bot 开一桌打 K 局 |
+| `smart_gz_bot.py` | 拱猪 bot `SmartGongzhuBot` |
+| `join.py` | 把智能 bot 拉进一个已有房间，按房间类型自动选 smart3、smart4、smart_gd 或 smart_gz |
+| `table.py` | `examples/run_table.py` 加上 `smart3` / `smart4` / `smart_gd` / `smart_gz`，注册一组新 bot 开一桌打 K 局 |
 | `endgame.py` | 残局搜索，smart3 和 smart4 共用 |
 | `service.py` | 服务器上的补位服务（systemd 服务 `ddz-bots`）：每种游戏 4 个 bot，按玩家的邀请入座 |
-| `ddz3_sim.py` / `ddz4_sim.py` / `gd_sim.py` | 不连服务端的本地模拟器，带复式对局评估，用来调参 |
+| `ddz3_sim.py` / `ddz4_sim.py` / `gd_sim.py` / `gz_sim.py` | 不连服务端的本地模拟器，带复式对局评估，用来调参 |
 
-测试在 `tests/test_smart3.py`、`test_smart4.py`、`test_smart_gd.py`，随 SDK 测试一起运行。
+测试在 `tests/test_smart3.py`、`test_smart4.py`、`test_smart_gd.py`、`test_smart_gz.py`，随 SDK 测试一起运行。
 
 ## 常用命令
 
@@ -22,6 +23,8 @@
 python smart/join.py --room r_xxxxxx --count 2
 # 掼蛋评估：smart_gd 对 greedy 打 500 副牌
 python smart/gd_sim.py --deals 500
+# 拱猪评估：smart_gz 对 greedy 打 200 副牌，7 个进程并行
+python smart/gz_sim.py --deals 200 --jobs 7
 # 新开一桌：4 个 smart4 打 100 局，每步停 1.5 秒
 python smart/table.py --base https://ddz.ohmycat.me --game ddz4 --bots smart4 --games 100 --pause-ms 1500 --invite 邀请码
 # 评估：smart3 对 greedy 打 1000 副牌
@@ -69,3 +72,21 @@ smart3 和 smart4 的思路相同，只是牌规和参数不同：
 |---|---|---|---|
 | smart_gd 对 greedy | 500（1000 局） | 1.61 ± 0.05 | 81% |
 | smart_gd 对 random | 100（200 局） | 2.95 ± 0.03 | 99.5% |
+
+## 拱猪 bot
+
+`SmartGongzhuBot` 不用拆牌框架，出牌用蒙特卡洛模拟：
+
+- 候选牌：所有可出的牌。同一花色里相邻的两张（中间没有别人可能有的牌）分值又相同时，出哪张效果一样，只算一张。
+- 发牌：把没见过的牌随机分给其他三家，和已知信息一致：每家剩几张、每家已经缺的花色（没跟领出的花色）、亮出还没出的牌在亮牌人手里。
+- 推演：每种发法下，每张候选牌都打到这一局结束，四家后面都按贪心策略出牌（领出最短花色里最小的非分牌；跟牌把猪塞给 `AS` / `KS`，能躲就躲在当前最大牌下面；垫牌先垫猪，再垫最贵的红桃，猪还没出时再垫 `AS` / `KS`）。所有候选牌用同一批发法。
+- 选择：出平均平台分 `(4 × 自己得分 − 四人得分之和) / 10` 最高的牌。每步最多算 0.35 秒或 300 种发法（`budget`、`max_samples` 可调），实测每步 0.3 秒以内。
+- 亮牌按规则：猪只在手里有 5 张以上比 Q 小的黑桃、且没有 `AS` / `KS` 时亮；羊在方块 4 张以上、且有 `AD` `KD` `QD` 中两张时亮；变压器不亮（它把收到它的人的得分翻倍，通常是负分）；`AH` 只在红桃 9 张以上且有 `KH` 时亮（争全红）。
+
+评估用 `gz_sim.py`：同一副牌先由 4 个对照 bot 打一遍，再让被测 bot 轮流坐到每个座位上（其余 3 家是对照 bot）各打一遍，比较同一座位的平台分。每局都是一场比赛的第一局（持 `2C` 的人先出）。
+
+| 对比 | 副数 | 每局多得的平台分 | 收到猪的比例（对照 bot 在同一座位） |
+|---|---|---|---|
+| smart_gz 对 greedy | 300 | 32.5 ± 1.4 | 18.7%（25.0%） |
+| smart_gz 对 random | 100 | 32.7 ± 1.7 | 7.5%（25.0%） |
+| greedy 对 random | 300 | 17.8 ± 0.9 | 9.7%（25.0%） |
