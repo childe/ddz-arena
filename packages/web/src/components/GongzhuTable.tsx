@@ -330,14 +330,20 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
     </button>
   );
 
+  /** Info | play button | card, hint or leave: the button stays in the same place whoever's turn it is. */
+  const playBar = (info: ReactNode, side: ReactNode, card: Card | null) => (
+    <div className="controls gz-play-bar">
+      <span className="gz-bar-info">{info}</span>
+      <button className="btn btn-primary" disabled={busy || !card} onClick={() => card && onPlay(card)}>
+        出牌
+      </button>
+      <span className="gz-bar-side">{side}</span>
+    </div>
+  );
+
   if (v.phase === 'expose') {
     if (!myTurn) {
-      return (
-        <div className="controls controls-waiting">
-          <span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 亮牌` : '等待亮牌'}</span>
-          {leaveBtn}
-        </div>
-      );
+      return playBar(<span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 亮牌` : '等待亮牌'}</span>, leaveBtn, null);
     }
     const options = exposableCards(v, mySeat);
     const toggle = (c: Card) =>
@@ -379,12 +385,7 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
   }
 
   if (!myTurn) {
-    return (
-      <div className="controls controls-waiting">
-        <span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 出牌` : '等待其他玩家出牌'}</span>
-        {leaveBtn}
-      </div>
-    );
+    return playBar(<span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 出牌` : '等待其他玩家出牌'}</span>, leaveBtn, null);
   }
 
   const legal = new Set(legalCards(v, mySeat));
@@ -392,14 +393,10 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
   const card = sel.length === 1 && legal.has(sel[0]!) ? sel[0]! : null;
   const t = v.trick;
   const led = t && t.winner === null && t.plays[0] ? t.plays[0].card[1]! : null;
-  return (
-    <div className="controls gz-controls">
-      <span className="preview">{led ? `跟 ${SUIT_NAMES[led] ?? led}` : '由你领出'}</span>
-      <button className="btn btn-primary" disabled={busy || !card} onClick={() => card && onPlay(card)}>
-        出牌
-      </button>
-      {card ? <PlayingCard code={card} size="xs" /> : <span className="muted">点一张亮着的牌</span>}
-    </div>
+  return playBar(
+    <span className="preview">{led ? `跟 ${SUIT_NAMES[led] ?? led}` : '由你领出'}</span>,
+    card ? <PlayingCard code={card} size="xs" /> : <span className="muted">点一张亮着的牌</span>,
+    card,
   );
 }
 

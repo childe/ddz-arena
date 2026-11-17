@@ -2233,6 +2233,28 @@ select {
 .gz-controls {
   row-gap: 6px;
 }
+/* Equal side columns keep the play button centred whatever the text beside it says. */
+.controls.gz-play-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+.gz-bar-info,
+.gz-bar-side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+.gz-bar-info {
+  justify-content: flex-end;
+}
+.gz-bar-info > *,
+.gz-bar-side > .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .gz-expose-opts {
   display: inline-flex;
   flex-wrap: wrap;
