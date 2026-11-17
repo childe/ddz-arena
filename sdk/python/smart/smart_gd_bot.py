@@ -111,7 +111,8 @@ def group_cost(g: Group) -> float:
 
 
 # ---------------------------------------------------------------- decomposition
-@lru_cache(maxsize=300_000)
+# Kept small: an entry costs ~1.5 KB and few hits come from earlier decisions.
+@lru_cache(maxsize=20_000)
 def _search(
     c: Tuple[int, ...], lv: int, after: Tuple[int, int]
 ) -> Tuple[float, Tuple[Group, ...]]:

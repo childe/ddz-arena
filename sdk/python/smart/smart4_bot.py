@@ -113,7 +113,8 @@ def decompose(counts: Sequence[int]) -> Tuple[float, Tuple[Group, ...]]:
     return cost + sum(group_cost(g) for g in fixed), tuple(fixed) + groups
 
 
-@lru_cache(maxsize=200_000)
+# Kept small: an entry costs ~1.5 KB and few hits come from earlier decisions.
+@lru_cache(maxsize=20_000)
 def _search(
     c: Tuple[int, ...], after: Tuple[int, int, int], planes: Tuple[Tuple[int, int], ...]
 ) -> Tuple[float, Tuple[Group, ...]]:
