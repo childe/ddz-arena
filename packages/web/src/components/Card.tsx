@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { type CSSProperties, type PointerEvent, useEffect, useRef, useState } from 'react';
 import { GD_PATTERN_NAMES, PATTERN_NAMES, PATTERN_NAMES4 } from '@ddz/engine';
 import type { ApiPattern, Card as CardCode, GameType } from '../api.ts';
 
@@ -139,16 +139,103 @@ interface HandProps {
   enabled?: (code: CardCode) => boolean;
 }
 
-/** Overlapping fan that always fits its container width (pure CSS). */
+/** True below 640px, where long own hands are split into two rows. */
+export function useNarrow(): boolean {
+  const q = '(max-width: 639px)';
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches);
+  useEffect(() => {
+    const m = window.matchMedia?.(q);
+    if (!m) return;
+    const on = () => setNarrow(m.matches);
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  return narrow;
+}
+
+/**
+ * Index of the card under (x, y) in a fan: the row nearest to y, then the last card whose
+ * left edge is at or before x (later cards cover earlier ones). Only x decides within a row,
+ * so a raised (selected) card is still hit at its old spot. -1 when left of every card.
+ */
+function cardAt(rowsEl: HTMLElement, x: number, y: number): number {
+  const rows = Array.from(rowsEl.children) as HTMLElement[];
+  let best = -1;
+  let bestDist = Infinity;
+  rows.forEach((row, i) => {
+    const r = row.getBoundingClientRect();
+    const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  });
+  let offset = 0;
+  for (let i = 0; i < best; i++) offset += rows[i]!.children.length;
+  const cards = Array.from(rows[best]?.children ?? []) as HTMLElement[];
+  for (let i = cards.length - 1; i >= 0; i--) {
+    const r = cards[i]!.getBoundingClientRect();
+    if (x >= r.left) return i === cards.length - 1 && x > r.right ? -1 : offset + i;
+  }
+  return -1;
+}
+
+/**
+ * Overlapping fan that always fits its container width (pure CSS). With ``onToggle`` the
+ * cards are picked by pointer: a tap toggles one card, a press-and-slide toggles every card
+ * it passes over (sliding back untoggles them again).
+ */
 export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows = 1, spread = 0.55, className = '', animate, wild, enabled }: HandProps) {
+  const drag = useRef<{ start: number; toggled: Set<number> } | null>(null);
   const items: (CardCode | null)[] = cards ? cards : new Array<null>(backs).fill(null);
   const keys = cards ? cardKeys(cards) : items.map((_, i) => `b${i}`);
   if (items.length === 0) return <div className={`hand hand-${size} hand-empty ${className}`} />;
   const perRow = Math.ceil(items.length / rows);
   const chunks: (CardCode | null)[][] = [];
   for (let i = 0; i < items.length; i += perRow) chunks.push(items.slice(i, i + perRow));
+  const pickable = (i: number) => items[i] != null && (!enabled || enabled(items[i]!));
+  const pick = !!(cards && onToggle);
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button > 0) return;
+    const i = cardAt(e.currentTarget, e.clientX, e.clientY);
+    if (i < 0 || !pickable(i)) return;
+    drag.current = { start: i, toggled: new Set([i]) };
+    onToggle!(keys[i]!);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const i = cardAt(e.currentTarget, e.clientX, e.clientY);
+    if (i < 0) return;
+    const lo = Math.min(d.start, i);
+    const hi = Math.max(d.start, i);
+    for (const j of [...d.toggled]) {
+      if (j < lo || j > hi) {
+        d.toggled.delete(j);
+        onToggle!(keys[j]!);
+      }
+    }
+    for (let j = lo; j <= hi; j++) {
+      if (!d.toggled.has(j) && pickable(j)) {
+        d.toggled.add(j);
+        onToggle!(keys[j]!);
+      }
+    }
+  };
+  const onPointerEnd = () => {
+    drag.current = null;
+  };
+
   return (
-    <div className={`hand-rows ${className}`}>
+    <div
+      className={`hand-rows${pick ? ' hand-pick' : ''} ${className}`}
+      onPointerDown={pick ? onPointerDown : undefined}
+      onPointerMove={pick ? onPointerMove : undefined}
+      onPointerUp={pick ? onPointerEnd : undefined}
+      onPointerCancel={pick ? onPointerEnd : undefined}
+    >
       {chunks.map((chunk, ri) => (
         <div
           key={ri}
@@ -165,7 +252,7 @@ export function Hand({ cards, backs = 0, size = 'md', selected, onToggle, rows =
                 back={c === null}
                 size={size}
                 selected={c !== null && !!selected?.has(k)}
-                onClick={c !== null && onToggle && !off ? () => onToggle(k) : undefined}
+                className={pick && !off ? 'clickable' : ''}
                 wild={c !== null && c === wild}
                 disabled={off}
                 style={animate ? { animationDelay: `${i * 25}ms` } : undefined}

@@ -22,7 +22,7 @@ import {
   returnableCards,
 } from '../guandanState.ts';
 import { type TableState, seatName } from '../state.ts';
-import { Hand, PlayingCard, cardsByKeys, keysForCards, patternName } from './Card.tsx';
+import { Hand, PlayingCard, cardsByKeys, keysForCards, patternName, useNarrow } from './Card.tsx';
 import { CountdownRing } from './Countdown.tsx';
 import { toast } from './Toast.tsx';
 
@@ -46,19 +46,6 @@ export interface GuandanTableProps {
   idleText?: string;
 }
 
-/** True below 640px, where long hands are split into two rows. */
-function useNarrow(): boolean {
-  const q = '(max-width: 639px)';
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches);
-  useEffect(() => {
-    const m = window.matchMedia?.(q);
-    if (!m) return;
-    const on = () => setNarrow(m.matches);
-    m.addEventListener('change', on);
-    return () => m.removeEventListener('change', on);
-  }, []);
-  return narrow;
-}
 
 const TEAM_NAMES = ['0 队', '1 队'];
 

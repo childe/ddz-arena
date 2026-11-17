@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from 'react';
 import type { Card } from '../api.ts';
 import { type TableState, ddzBottomSize, ddzSeats, seatName } from '../state.ts';
-import { Hand, PlayingCard, patternName } from './Card.tsx';
+import { Hand, PlayingCard, patternName, useNarrow } from './Card.tsx';
 import { CountdownRing } from './Countdown.tsx';
 
 export interface TableProps {
@@ -144,6 +144,7 @@ function SeatPanel(props: TableProps & { seat: number; side?: boolean }) {
   const player = g?.players.find((p) => p.seat === seat);
   const name = info?.name ?? player?.name;
   const isMine = mySeat === seat;
+  const narrow = useNarrow();
   const known = g?.hands[seat] ?? null;
   const left = g ? (known && (isMine || reveal || g.phase === 'finished') ? known.length : g.cards_left[seat] ?? 0) : 0;
   const onTurn = !!g && g.turn === seat && g.phase !== 'finished';
@@ -162,7 +163,16 @@ function SeatPanel(props: TableProps & { seat: number; side?: boolean }) {
   let handView: ReactNode = null;
   if (g) {
     if (isMine && known) {
-      handView = <Hand cards={known} size="lg" selected={props.selected} onToggle={props.onToggle} className="my-hand" />;
+      handView = (
+        <Hand
+          cards={known}
+          size="lg"
+          selected={props.selected}
+          onToggle={props.onToggle}
+          rows={narrow && known.length > 12 ? 2 : 1}
+          className="my-hand"
+        />
+      );
     } else if (known && (reveal || g.phase === 'finished')) {
       handView = <Hand cards={known} size={side ? 'xs' : 'md'} rows={side && known.length > 10 ? Math.ceil(known.length / 12) : 1} />;
     } else if (left > 0) {

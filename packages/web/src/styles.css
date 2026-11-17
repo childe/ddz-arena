@@ -1186,6 +1186,10 @@ select {
 .hand > .card + .card {
   margin-left: min(calc((100% - var(--cw)) / var(--n1) - var(--cw)), calc(var(--cw) * (var(--spread) - 1)));
 }
+/* Own hand: picked by pointer (tap or slide); vertical swipes still scroll the page. */
+.hand-pick {
+  touch-action: pan-y;
+}
 .hand-empty {
   min-height: 1px;
 }
