@@ -133,6 +133,16 @@ paths:
                   game: { oneOf: [{ $ref: '#/components/schemas/PublicGame' }, { type: 'null' }] }
                   seq: { type: integer, description: Latest event seq in this room }
         '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: dissolveRoom
+      description: >-
+        Creator only. Closes the room at once: everyone is unseated, a running game is dropped
+        (not scored, no replay) and a final `room.dissolved` event is sent.
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /rooms/{rid}/join:
     parameters: [{ $ref: '#/components/parameters/rid' }]
     post:
@@ -561,6 +571,7 @@ components:
         game_id: { type: [string, 'null'] }
         games_played: { type: integer }
         config: { $ref: '#/components/schemas/RoomConfig' }
+        owner_id: { type: [string, 'null'], description: bot_id of the creator (may dissolve the room); null for quick-join rooms }
     Player:
       type: object
       required: [seat, bot_id, name, kind]

@@ -75,7 +75,7 @@ export class Arena {
 
   // ---------- rooms ----------
 
-  createRoom(name: unknown, config: unknown, game?: unknown): Room {
+  createRoom(name: unknown, config: unknown, game?: unknown, ownerId?: string): Room {
     if (name !== undefined && (typeof name !== 'string' || name.length > 40)) throw badRequest('name must be a string up to 40 chars');
     const variant = variantOf(game);
     const room = new Room(name as string, variant, parseConfig(config, variant), {
@@ -83,6 +83,7 @@ export class Arena {
       gameStarted: (r, gid) => this.gameRoom.set(gid, r.id),
       gameFinished: (r, f) => this.persist(f),
     });
+    room.ownerId = ownerId ?? null;
     room.isConnected = (botId) => (this.players.get(botId)?.size ?? 0) > 0;
     this.rooms.set(room.id, room);
     return room;
@@ -123,6 +124,16 @@ export class Arena {
     if (room.seatOf(bot.id) === null) throw conflict('NOT_IN_ROOM', 'you are not seated in this room');
     room.leave(bot.id);
     if (room.seatOf(bot.id) === null && this.botRoom.get(bot.id) === room.id) this.botRoom.delete(bot.id);
+  }
+
+  /** The creator closes the room at once: everyone is unseated and a running game is dropped
+   * (not scored, no replay). */
+  dissolve(bot: BotRow, room: Room) {
+    if (room.ownerId !== bot.id) throw new ApiError(403, 'NOT_OWNER', 'only the room creator can dissolve it');
+    room.dissolve(bot.id);
+    this.rooms.delete(room.id);
+    if (room.gameId) this.gameRoom.delete(room.gameId);
+    for (const [b, rid] of this.botRoom) if (rid === room.id) this.botRoom.delete(b);
   }
 
   /** Room hosting game `gid` while that game is the room's current one. */

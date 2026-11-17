@@ -20,7 +20,7 @@ import { HoldemControls, HoldemHistory, HoldemTable, holdemSeats } from '../comp
 import { Table, tableSeats } from '../components/Table.tsx';
 import { toast } from '../components/Toast.tsx';
 import { useGuest } from '../guest.ts';
-import { href } from '../router.ts';
+import { href, navigate } from '../router.ts';
 import { type OwnView, type TableState, applyEvent, currentGameId, emptyTable, tableFromSnapshot } from '../state.ts';
 import { LiveSocket, type SocketStatus } from '../ws.ts';
 
@@ -127,6 +127,11 @@ export function RoomPage({ rid }: { rid: string }) {
         getSince: () => stateRef.current.seq || null,
         onEvent: (ev) => {
           if (ev.room_id && ev.room_id !== rid) return;
+          if (ev.type === 'room.dissolved') {
+            if (ev.data?.by !== guest?.bot_id) toast('房主已解散这个房间', 'info');
+            navigate(href.lobby());
+            return;
+          }
           dispatch({ t: 'ev', ev, now: Date.now() });
         },
         onHello: (_d, withSince) => {
@@ -146,7 +151,7 @@ export function RoomPage({ rid }: { rid: string }) {
       alive = false;
       sock?.close();
     };
-  }, [rid, playerMode, token, refresh]);
+  }, [rid, playerMode, token, refresh, guest?.bot_id]);
 
   const isHoldem = state.gameType === 'holdem';
   const isDdz4 = state.gameType === 'ddz4';
@@ -299,6 +304,16 @@ export function RoomPage({ rid }: { rid: string }) {
       const r = await api.inviteSmartBots(token!, rid);
       toast(`已邀请 ${r.invited} 个智能 bot，马上入座`, 'info');
     });
+  const isOwner = !!guest && !!room?.owner_id && room.owner_id === guest.bot_id;
+  const dissolve = () => {
+    const running = room?.status === 'playing';
+    if (!confirm(running ? '对局进行中，解散后本局作废、不计分。确定解散房间？' : '解散后所有人离座，房间立即关闭。确定解散？')) return;
+    return run(async () => {
+      await api.dissolve(token!, rid);
+      toast('房间已解散', 'info');
+      navigate(href.lobby());
+    });
+  };
   const gameRunning = isHoldem ? !!hg && hg.phase !== 'finished' : isGd ? !!gd && gd.phase !== 'finished' : !!g && g.phase !== 'finished';
   const readyControls = (
     <div className="controls">
@@ -462,6 +477,11 @@ export function RoomPage({ rid }: { rid: string }) {
         <span className={`sock sock-${sockStatus}`} title={sockStatus === 'open' ? '实时连接正常' : '正在重连'}>
           {sockStatus === 'open' ? (playerMode ? '对局中' : '围观中') : '重连中…'}
         </span>
+        {isOwner && (
+          <button className="btn btn-small btn-dissolve" disabled={busy} onClick={dissolve} title="你创建了这个房间，可以解散它">
+            解散房间
+          </button>
+        )}
       </div>
       {!guest && hasEmpty && (
         <details className="join-help">

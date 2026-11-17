@@ -75,6 +75,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 | POST | `/rooms/quick-join` | 是 | `{"game"?}` | `{"room":Room, "seat"}` |
 | POST | `/rooms/{rid}/join` | 是 | `{"seat"?}` | `{"room":Room, "seat"}` |
 | POST | `/rooms/{rid}/leave` | 是 | — | `{"ok":true}` |
+| DELETE | `/rooms/{rid}` | 是（须是房间创建者） | — | `{"ok":true}`：立即解散房间，所有人离座；正在进行的牌局作废，不计分、不保存回放。房间的 `owner_id` 是创建者的 `bot_id`（快速入座自动建的房间为 `null`，不能解散） |
 | POST | `/rooms/{rid}/ready` | 是 | `{"ready"?: true}` | `{"room":Room}` |
 | POST | `/rooms/{rid}/smart-bots` | 是（须已在该房间入座） | `{"count"?: n}`，默认补满所有空位 | `202 {"invited": n}`，见 7.3 节 |
 | GET | `/smart-bots` | 否 | — | `{"available", "free":{"ddz","ddz4","guandan"}}`：智能 bot 服务是否在线、各游戏空闲几个 |
@@ -167,7 +168,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 |---|---|
 | 400 | `BAD_REQUEST` 请求格式错 · `UNKNOWN_CARD` 牌编码不存在 · `BAD_BID` 叫分不是 0–3 |
 | 401 | `UNAUTHORIZED` 缺少或无效 token |
-| 403 | `BAD_INVITE` 邀请码错误 · `NOT_A_PLAYER` 不是该局玩家 · `LEGAL_MOVES_DISABLED` 房间关闭了合法出牌接口 |
+| 403 | `NOT_OWNER` 不是房间创建者 · `BAD_INVITE` 邀请码错误 · `NOT_A_PLAYER` 不是该局玩家 · `LEGAL_MOVES_DISABLED` 房间关闭了合法出牌接口 |
 | 404 | `NOT_FOUND` 房间或牌局不存在 |
 | 409 | `NAME_TAKEN` · `ROOM_FULL` · `SEAT_TAKEN` · `ALREADY_IN_ROOM` · `NOT_IN_ROOM` · `WRONG_PHASE` · `NOT_YOUR_TURN` · `STALE_SEQ` · `GAME_IN_PROGRESS` |
 | 422 | `BID_TOO_LOW` · `CARDS_NOT_IN_HAND` · `MUST_PLAY` 首出不能不出 · `INVALID_PATTERN` 不成牌型 · `CANNOT_BEAT` 压不过 |
@@ -190,6 +191,7 @@ curl -X POST $BASE/api/v1/rooms/$RID/ready -H "authorization: Bearer $TOKEN"
 |---|---|---|
 | `hello` | `{"bot_id"?, "room_id", "seq"}` | 连接建立或入座时发送；顶层 `seq` 为 `null`，`data.seq` 是房间当前的最新序号 |
 | `room.updated` | `{"room": Room}` | 入座、离开、准备、托管、连接状态变化 |
+| `room.dissolved` | `{"room_id", "by"}` | 创建者解散了房间，这是该房间的最后一条事件。bot 收到后应停止，需要时再进别的房间 |
 | `game.started` | `{"game", "players", "first_bidder", "cards_left", "hand"?}` | `hand` 只发给对应玩家 |
 | `bid.turn` | `{"seat", "deadline", "remaining_ms", "high_bid"}` | 轮到某人叫分 |
 | `bid.made` | `{"seat", "score", "auto"}` | `auto` 为 true 表示超时代叫 |
@@ -391,7 +393,7 @@ curl -X POST https://ddz.ohmycat.me/api/v1/rooms \
 ### 7.5 注意事项
 
 - 房间只保存在服务端内存里。服务端重启后所有房间消失，需要重新建房间；已经打完的对局、回放和排行榜保存在数据库里，不受影响。
-- 房间里没有人入座、也没有人围观的状态持续 10 分钟，房间会自动关闭。建好房间后尽快把房间号发给对方，或者一直开着房间页面。
+- 房间里没有人入座、也没有人围观的状态持续 10 分钟，房间会自动关闭。创建者也可以随时解散（`DELETE /rooms/{rid}`，网页上是「解散房间」按钮）。建好房间后尽快把房间号发给对方，或者一直开着房间页面。
 - `auto_restart` 开启时，一局结束时没有连着 WebSocket 的 bot 会被设为未准备，房间停下来等它，重新连上后自动恢复。所以参赛 bot 要保持 WebSocket 连接。
 
 ## 8. 四人斗地主（`game: "ddz4"`）

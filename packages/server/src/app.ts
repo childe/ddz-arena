@@ -120,9 +120,9 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   // ---------- rooms ----------
   app.get('/api/v1/rooms', async () => ({ rooms: [...arena.rooms.values()].map((r) => r.summary()) }));
   app.post('/api/v1/rooms', async (req, reply) => {
-    auth(req);
+    const bot = auth(req);
     const b = body(req);
-    const room = arena.createRoom(b.name, b.config, b.game);
+    const room = arena.createRoom(b.name, b.config, b.game, bot.id);
     reply.status(201);
     return room.summary();
   });
@@ -145,6 +145,10 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
   });
   app.post<P>('/api/v1/rooms/:rid/leave', async (req) => {
     arena.leave(auth(req), arena.room(req.params.rid));
+    return { ok: true };
+  });
+  app.delete<P>('/api/v1/rooms/:rid', async (req) => {
+    arena.dissolve(auth(req), arena.room(req.params.rid));
     return { ok: true };
   });
   app.post<P>('/api/v1/rooms/:rid/smart-bots', async (req, reply) => {

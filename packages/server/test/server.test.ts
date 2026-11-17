@@ -81,6 +81,29 @@ async function setupTable(config?: Record<string, unknown>) {
   return { bots, room, listeners, spec };
 }
 
+describe('dissolving a room', () => {
+  it('only the creator can dissolve, even mid-game; the game is dropped', async () => {
+    const { bots, room, listeners, spec } = await setupTable({ auto_restart: false });
+    expect(room.owner_id).toBe(bots[0]!.bot_id);
+    for (const b of bots) await api('POST', `/api/v1/rooms/${room.id}/ready`, b.token, {});
+    const started = await spec.wait((e) => e.type === 'game.started');
+    expect((await api('DELETE', `/api/v1/rooms/${room.id}`, bots[1]!.token)).body.error.code).toBe('NOT_OWNER');
+    expect((await api('DELETE', `/api/v1/rooms/${room.id}`)).status).toBe(401);
+    expect((await api('DELETE', `/api/v1/rooms/${room.id}`, bots[0]!.token)).status).toBe(200);
+    const ev = await listeners[2]!.wait((e) => e.type === 'room.dissolved');
+    expect(ev.data).toEqual({ room_id: room.id, by: bots[0]!.bot_id });
+    await spec.wait((e) => e.type === 'room.dissolved');
+    expect((await api('GET', `/api/v1/rooms/${room.id}`)).status).toBe(404);
+    expect((await api('GET', `/api/v1/games/${started.game_id}/legal-moves`, bots[0]!.token)).status).toBe(404);
+    // Everyone is free to sit elsewhere, and the dropped game is not in the history.
+    expect((await api('GET', '/api/v1/me', bots[1]!.token)).body.room_id).toBeNull();
+    const other = (await api('POST', '/api/v1/rooms', bots[1]!.token, {})).body;
+    expect((await api('POST', `/api/v1/rooms/${other.id}/join`, bots[1]!.token, {})).status).toBe(200);
+    expect((await api('GET', `/api/v1/games?room_id=${room.id}`)).body.games).toEqual([]);
+    [...listeners, spec].forEach((l) => l.close());
+  });
+});
+
 describe('accounts and errors', () => {
   it('registration and auth', async () => {
     expect((await api('POST', '/api/v1/bots', undefined, { name: 'x1', invite_code: 'nope' })).body.error.code).toBe('BAD_INVITE');

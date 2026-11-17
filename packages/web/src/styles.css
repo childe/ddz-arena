@@ -589,6 +589,11 @@ select {
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
+.btn-dissolve {
+  margin-left: auto;
+  color: #c92a2a;
+  border-color: #e8a3a3;
+}
 .room-head h2 {
   margin: 0;
   font-size: 17px;

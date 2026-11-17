@@ -51,6 +51,8 @@ export interface Room {
   game_id: string | null;
   games_played: number;
   config?: Partial<RoomConfig>;
+  /** Bot that created the room and may dissolve it (null: made by quick-join). */
+  owner_id?: string | null;
 }
 
 export interface Player {
@@ -450,6 +452,8 @@ export const api = {
   /** Ask the smart-bot service to fill up to `count` empty seats (default: all). */
   inviteSmartBots: (token: string, rid: string, count?: number) =>
     request<{ invited: number }>('POST', `/rooms/${encodeURIComponent(rid)}/smart-bots`, { token, body: count ? { count } : {} }),
+  /** Creator only: close the room now; a running game is dropped. */
+  dissolve: (token: string, rid: string) => request<{ ok: true }>('DELETE', `/rooms/${encodeURIComponent(rid)}`, { token }),
   leave: (token: string, rid: string) => request<{ ok: true }>('POST', `/rooms/${encodeURIComponent(rid)}/leave`, { token, body: {} }),
   ready: (token: string, rid: string, ready = true) =>
     request<{ room: Room }>('POST', `/rooms/${encodeURIComponent(rid)}/ready`, { token, body: { ready } }),

@@ -162,6 +162,10 @@ class Client:
     def leave_room(self, room_id: str) -> Dict[str, Any]:
         return self._req("POST", "/rooms/%s/leave" % _q(room_id), {})
 
+    def dissolve_room(self, room_id: str) -> Dict[str, Any]:
+        """Close a room you created: everyone is unseated and a running game is dropped."""
+        return self._req("DELETE", "/rooms/%s" % _q(room_id))
+
     def ready(self, room_id: str, ready: bool = True) -> Dict[str, Any]:
         return self._req("POST", "/rooms/%s/ready" % _q(room_id), {"ready": ready})
 

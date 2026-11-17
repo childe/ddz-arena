@@ -354,6 +354,11 @@ class BaseBot:
             self._refresh_state(force=True)
         elif t == "room.updated":
             self._on_room(data.get("room") or {})
+        elif t == "room.dissolved":
+            self._info(
+                "room %s was dissolved by its creator; stopping", data.get("room_id")
+            )
+            self._stop.set()
         elif t == "game.finished":
             st = self.state
             st.phase = "finished"

@@ -85,6 +85,8 @@ export class Room {
   turnSeq = 0;
   deadline = 0;
   emptySince: number | null;
+  /** Bot that created the room (may dissolve it); null for rooms made by quick-join. */
+  ownerId: string | null = null;
   /** Connected spectator count, maintained by the arena. */
   spectators = 0;
   /** Returns how many player sockets a bot has open; set by the arena. */
@@ -126,6 +128,7 @@ export class Room {
         seat: i, bot_id: s.bot_id, name: s.name, kind: s.kind, ready: s.ready,
         connected: this.isConnected(s.bot_id), trustee: s.trustee || s.left, score: s.score,
       }),
+      owner_id: this.ownerId,
       spectators: this.spectators,
       game_id: this.status === 'playing' ? this.gameId : null,
       games_played: this.gamesPlayed,
@@ -444,6 +447,12 @@ export class Room {
         this.maybeStart();
       }, RESTART_DELAY_MS);
     }
+  }
+
+  /** Tell everyone the room is gone and stop its timers; a running game is dropped unscored. */
+  dissolve(botId: string) {
+    this.emit('room.dissolved', { room_id: this.id, by: botId });
+    this.dispose();
   }
 
   dispose() {
