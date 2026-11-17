@@ -259,6 +259,21 @@ describe('timeouts and trustee', () => {
   }, 30000);
 });
 
+describe('leaving mid-game', () => {
+  it('frees the seat when the game ends, and /me no longer reports the room', async () => {
+    const { bots, room, listeners, spec } = await setupTable({ auto_restart: false });
+    for (const b of bots) await api('POST', `/api/v1/rooms/${room.id}/ready`, b.token, {});
+    await spec.wait((e) => e.type === 'game.started');
+    for (const b of bots) expect((await api('POST', `/api/v1/rooms/${room.id}/leave`, b.token, {})).status).toBe(200);
+    expect((await api('GET', '/api/v1/me', bots[0]!.token)).body.room_id).toBe(room.id); // still playing for them
+    await spec.wait((e) => e.type === 'game.finished', 60000);
+    const me = (await api('GET', '/api/v1/me', bots[0]!.token)).body;
+    expect(me).toMatchObject({ room_id: null, seat: null });
+    expect((await api('POST', `/api/v1/rooms/${room.id}/join`, bots[0]!.token, {})).status).toBe(200);
+    [...listeners, spec].forEach((l) => l.close());
+  }, 90000);
+});
+
 describe('auto restart with disconnected bots', () => {
   it('stops after a game when a seat has no WebSocket and resumes on reconnect', async () => {
     const { bots, room, listeners, spec } = await setupTable();
