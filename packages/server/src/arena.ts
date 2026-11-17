@@ -104,7 +104,13 @@ export class Arena {
 
   roomOfBot(botId: string): Room | undefined {
     const id = this.botRoom.get(botId);
-    return id ? this.rooms.get(id) : undefined;
+    const room = id ? this.rooms.get(id) : undefined;
+    // A bot that left mid-game keeps its seat until the game ends; after that it is in no room.
+    if (room && room.seatOf(botId) === null) {
+      this.botRoom.delete(botId);
+      return undefined;
+    }
+    return room;
   }
 
   join(bot: BotRow, room: Room, seat?: number): number {

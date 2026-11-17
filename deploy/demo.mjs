@@ -6,6 +6,10 @@
 //
 // Tokens and room ids are kept in DDZ_DEMO_STATE (default data/demo.json) so the same bots are reused.
 // A supervisor loop recreates rooms after a server restart (rooms live in memory).
+//
+// A `{ smart: true }` entry is a seat for one smart bot from the smart-bot service (ddz-bots), invited
+// through POST /rooms/{rid}/smart-bots. It stays because the demo bots count as other players; if the
+// service is down the seat stays empty and the supervisor retries the invite.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { cardValue, evaluateHoldem, isBombLike, isWildcard, strength } from '@ddz/engine';
@@ -17,12 +21,12 @@ const STATE = process.env.DDZ_DEMO_STATE ?? 'data/demo.json';
 const TABLES = [
   {
     key: 'ddz', game: 'ddz', room: '三机演示',
-    bots: [{ name: '演示-贪心A', style: 'greedy' }, { name: '演示-贪心B', style: 'greedy' }, { name: '演示-随机C', style: 'random' }],
+    bots: [{ name: '演示-贪心A', style: 'greedy' }, { smart: true }, { name: '演示-随机C', style: 'random' }],
   },
   {
     key: 'ddz4', game: 'ddz4', room: '四人斗地主演示',
     bots: [
-      { name: '四人-贪心A', style: 'greedy' }, { name: '四人-贪心B', style: 'greedy' },
+      { name: '四人-贪心A', style: 'greedy' }, { smart: true },
       { name: '四人-贪心C', style: 'greedy' }, { name: '四人-随机D', style: 'random' },
     ],
   },
@@ -36,7 +40,7 @@ const TABLES = [
   {
     key: 'guandan', game: 'guandan', room: '掼蛋演示',
     bots: [
-      { name: '掼蛋-贪心A', style: 'greedy' }, { name: '掼蛋-贪心B', style: 'greedy' },
+      { name: '掼蛋-贪心A', style: 'greedy' }, { smart: true },
       { name: '掼蛋-贪心C', style: 'greedy' }, { name: '掼蛋-随机D', style: 'random' },
     ],
   },
@@ -288,49 +292,75 @@ class DemoBot {
 // ---------- room supervisor ----------
 
 async function ensureRoom(table) {
-  const { bots } = table;
+  const { bots, seats } = table;
   const rid = state.rooms[table.key];
   if (rid) {
     const r = await api('GET', `/rooms/${rid}`);
     if (r.status === 0) return; // server down; try again later
     const room = r.data?.room;
-    if (r.status === 200 && room.game === table.game && bots.every((b, i) => room.seats[i]?.bot_id === b.id)) {
-      bots.forEach((b, i) => (b.seat = i));
+    if (r.status === 200 && room.game === table.game && bots.every((b) => room.seats[b.seat]?.bot_id === b.id)) {
       // Watchdog: pick up a turn whose event was missed (e.g. it arrived before seats were known).
       if (room.status === 'playing' && room.game_id) for (const b of bots) b.act({ game_id: room.game_id });
       if (room.status === 'waiting') {
-        for (const [i, b] of bots.entries()) if (!room.seats[i].ready) await api('POST', `/rooms/${room.id}/ready`, b.token, { ready: true });
+        for (const b of bots) if (!room.seats[b.seat].ready) await api('POST', `/rooms/${room.id}/ready`, b.token, { ready: true });
+        await inviteSmart(table, room);
       }
       return;
     }
   }
   const created = await api('POST', '/rooms', bots[0].token, { name: table.room, game: table.game, config: table.config });
   if (created.status !== 201) throw new Error(`create room: ${JSON.stringify(created.data)}`);
-  const newId = created.data.id;
-  for (const [i, b] of bots.entries()) {
+  const room = created.data;
+  for (const b of bots) {
     const cur = (await api('GET', '/me', b.token)).data;
-    if (cur.room_id && cur.room_id !== newId) await api('POST', `/rooms/${cur.room_id}/leave`, b.token, {});
-    const j = await api('POST', `/rooms/${newId}/join`, b.token, { seat: i });
+    if (cur.room_id && cur.room_id !== room.id) await api('POST', `/rooms/${cur.room_id}/leave`, b.token, {});
+    const j = await api('POST', `/rooms/${room.id}/join`, b.token, { seat: b.seat });
     if (j.status !== 200) throw new Error(`join: ${JSON.stringify(j.data)}`);
-    b.seat = i;
   }
-  for (const b of bots) await api('POST', `/rooms/${newId}/ready`, b.token, { ready: true });
-  state.rooms[table.key] = newId;
+  for (const b of bots) await api('POST', `/rooms/${room.id}/ready`, b.token, { ready: true });
+  state.rooms[table.key] = room.id;
   saveState();
-  log(`${table.key} room ${newId} ready: ${BASE}/#/room/${newId}`);
+  log(`${table.key} room ${room.id} ready: ${BASE}/#/room/${room.id}`);
+  await inviteSmart(table, { id: room.id, seats: seats.map(() => null) });
+}
+
+/** Ask the smart-bot service to fill the room's smart seats; they are the only seats left empty. */
+async function inviteSmart(table, room) {
+  const empty = table.seats.filter((b, i) => b === null && !room.seats[i]).length;
+  if (!empty) return;
+  const r = await api('POST', `/rooms/${room.id}/smart-bots`, table.bots[0].token, { count: empty });
+  if (r.status === 202) log(`${table.key} invited ${r.data.invited} smart bot(s)`);
+  else log(`${table.key} smart-bot invite failed:`, r.status, JSON.stringify(r.data));
+}
+
+// Bots dropped from TABLES (e.g. replaced by a smart seat) leave their old room, so it doesn't linger.
+const current = new Set(TABLES.flatMap((t) => t.bots.filter((s) => !s.smart).map((s) => s.name)));
+for (const [name, token] of Object.entries(state.bots)) {
+  if (current.has(name)) continue;
+  const me = await api('GET', '/me', token);
+  if (me.data?.room_id) {
+    await api('POST', `/rooms/${me.data.room_id}/leave`, token, {});
+    log('retired', name, 'left', me.data.room_id);
+  }
 }
 
 for (const table of TABLES) {
-  const bots = [];
-  for (const spec of table.bots) {
+  const seats = [];
+  for (const [i, spec] of table.bots.entries()) {
+    if (spec.smart) {
+      seats.push(null);
+      continue;
+    }
     const bot = new DemoBot(spec, await register(spec), table);
     const me = await api('GET', '/me', bot.token);
     if (me.status !== 200) throw new Error(`me: ${JSON.stringify(me.data)}`);
     bot.id = me.data.bot_id;
-    bots.push(bot);
+    bot.seat = i;
+    seats.push(bot);
   }
-  table.bots = bots;
-  for (const b of bots) b.connect();
+  table.seats = seats;
+  table.bots = seats.filter(Boolean);
+  for (const b of table.bots) b.connect();
 }
 await sleep(1000); // let sockets open before seating, so the first events aren't missed
 for (;;) {
