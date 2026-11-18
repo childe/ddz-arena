@@ -93,7 +93,7 @@ function CenterInfo({ state }: { state: TableState }) {
       </div>
       {g && (
         <div className="chips">
-          <span className="chip">{g.phase === 'bidding' ? '叫分中' : g.phase === 'playing' ? '出牌中' : '已结束'}</span>
+          <span className="chip chip-phase">{g.phase === 'bidding' ? '叫分中' : g.phase === 'playing' ? '出牌中' : '已结束'}</span>
           <span className="chip">叫分 {g.high_bid || '-'}</span>
           <span className="chip">倍数 ×{g.multiplier}</span>
           {g.redeals > 0 && <span className="chip">重发 {g.redeals}</span>}
@@ -204,7 +204,7 @@ function SeatPanel(props: TableProps & { seat: number; side?: boolean }) {
           </div>
           <div className="seat-badges">
             {role}
-            {info && <span className="badge">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
+            {info && <span className="badge badge-kind">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
             {info && !g && <span className={`badge ${info.ready ? 'badge-ok' : ''}`}>{info.ready ? '已准备' : '未准备'}</span>}
             {info && g?.phase === 'finished' && state.room?.status !== 'playing' && (
               <span className={`badge ${info.ready ? 'badge-ok' : ''}`}>{info.ready ? '已准备' : '未准备'}</span>
@@ -213,8 +213,8 @@ function SeatPanel(props: TableProps & { seat: number; side?: boolean }) {
             {info && !info.connected && <span className="badge badge-warn">离线</span>}
           </div>
           <div className="seat-stats">
-            {g && <span>剩 {left} 张</span>}
-            {info && <span>积分 {info.score}</span>}
+            {g && <span className="stat-left">剩 {left} 张</span>}
+            {info && <span className="stat-score">积分 {info.score}</span>}
           </div>
         </div>
         {props.seatExtra?.(seat)}

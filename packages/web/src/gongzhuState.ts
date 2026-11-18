@@ -43,7 +43,6 @@ const N = 4;
 const fill = <T,>(v: T): T[] => Array.from({ length: N }, () => v);
 const suitOf = (c: Card) => c[1]!;
 
-export const SUIT_NAMES: Record<string, string> = { S: '♠ 黑桃', H: '♥ 红桃', C: '♣ 梅花', D: '♦ 方块' };
 /** Names of the exposable cards. */
 export const GZ_CARD_NAMES: Record<string, string> = { QS: '猪', JD: '羊', TC: '变压器', AH: '红桃 A' };
 

@@ -170,7 +170,8 @@ function cardAt(rowsEl: HTMLElement, x: number, y: number): number {
   rows.forEach((row, i) => {
     const r = row.getBoundingClientRect();
     const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
-    if (d < bestDist) {
+    // `<=`: where rows overlap (phones), the later row is drawn on top and wins.
+    if (d <= bestDist) {
       bestDist = d;
       best = i;
     }

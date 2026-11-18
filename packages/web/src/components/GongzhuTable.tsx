@@ -4,7 +4,6 @@ import type { Card } from '../api.ts';
 import {
   GZ_CARD_NAMES,
   type GongzhuView,
-  SUIT_NAMES,
   exposableCards,
   gzResultSummary,
   handPoints,
@@ -12,7 +11,7 @@ import {
   signed,
 } from '../gongzhuState.ts';
 import { type TableState, seatName } from '../state.ts';
-import { Hand, PlayingCard, cardsByKeys, useNarrow } from './Card.tsx';
+import { Hand, PlayingCard, cardsByKeys } from './Card.tsx';
 import { CountdownRing } from './Countdown.tsx';
 
 export interface GongzhuTableProps {
@@ -84,7 +83,7 @@ function CenterInfo({ state, v }: { state: TableState; v: GongzhuView }) {
   return (
     <div className="center-info gz-info">
       <div className="chips">
-        <span className="chip">{v.phase === 'expose' ? '亮牌中' : v.phase === 'playing' ? '出牌中' : '已结束'}</span>
+        <span className="chip chip-phase">{v.phase === 'expose' ? '亮牌中' : v.phase === 'playing' ? '出牌中' : '已结束'}</span>
         <span className="chip">第 {v.hand_no} 局</span>
         {v.phase === 'expose' ? (
           <span className="chip">{name(v.first_leader)} 先出</span>
@@ -142,7 +141,6 @@ function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 
 function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) {
   const { state, seat, side, reveal, showTimers, mySeat } = props;
   const v = state.gongzhu;
-  const narrow = useNarrow();
   const info = state.room?.seats[seat] ?? null;
   const player = v?.players.find((p) => p.seat === seat);
   const name = info?.name ?? player?.name;
@@ -167,7 +165,6 @@ function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) 
           onToggle={props.onToggle}
           enabled={props.enabled}
           tagOf={tagOf}
-          rows={narrow && known.length > 7 ? 2 : 1}
           className="my-hand"
         />
       );
@@ -201,7 +198,7 @@ function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) 
             {isMine && <span className="badge badge-me">我</span>}
           </div>
           <div className="seat-badges">
-            {info && <span className="badge">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
+            {info && <span className="badge badge-kind">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
             {info && (!v || (v.phase === 'finished' && state.room?.status !== 'playing')) && (
               <span className={`badge ${info.ready ? 'badge-ok' : ''}`}>{info.ready ? '已准备' : '未准备'}</span>
             )}
@@ -214,7 +211,7 @@ function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) 
             ))}
           </div>
           <div className="seat-stats">
-            {v && <span>剩 {left} 张</span>}
+            {v && <span className="stat-left">剩 {left} 张</span>}
             {v && (
               <span title="本局开始前的累计分">
                 累计 <b className={scoreCls(v.totals[seat] ?? 0)}>{v.totals[seat] ?? 0}</b>
@@ -225,7 +222,7 @@ function SeatPanel(props: GongzhuTableProps & { seat: number; side?: boolean }) 
                 本局 <b className={scoreCls(points)}>{signed(points)}</b>
               </span>
             )}
-            {info && <span>积分 {info.score}</span>}
+            {info && <span className="stat-score">积分 {info.score}</span>}
           </div>
           {/* Always there during a hand, so the seat does not grow when the first scoring card is taken. */}
           {v && (
@@ -323,17 +320,17 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
   useEffect(() => {
     setPicks(new Set());
   }, [v.turn_seq, v.game_id]);
-  const name = (s: number) => seatName(state, s);
   const leaveBtn = (
     <button className="btn btn-small" disabled={busy} onClick={onLeave}>
       离开
     </button>
   );
 
-  /** Info | play button | card, hint or leave: the button stays in the same place whoever's turn it is. */
-  const playBar = (info: ReactNode, side: ReactNode, card: Card | null) => (
+  /** Play button | picked card or leave: the button stays in the same place whoever's turn it is.
+   *  No text: the turn shows as the countdown on that player's avatar, the playable cards stay lit. */
+  const playBar = (side: ReactNode, card: Card | null) => (
     <div className="controls gz-play-bar">
-      <span className="gz-bar-info">{info}</span>
+      <span />
       <button className="btn btn-primary" disabled={busy || !card} onClick={() => card && onPlay(card)}>
         出牌
       </button>
@@ -343,7 +340,7 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
 
   if (v.phase === 'expose') {
     if (!myTurn) {
-      return playBar(<span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 亮牌` : '等待亮牌'}</span>, leaveBtn, null);
+      return playBar(leaveBtn, null);
     }
     const options = exposableCards(v, mySeat);
     const toggle = (c: Card) =>
@@ -385,19 +382,13 @@ export function GongzhuControls({ state, mySeat, selected, busy, onExpose, onPla
   }
 
   if (!myTurn) {
-    return playBar(<span className="muted">{v.turn !== null ? `等待 ${name(v.turn)} 出牌` : '等待其他玩家出牌'}</span>, leaveBtn, null);
+    return playBar(leaveBtn, null);
   }
 
   const legal = new Set(legalCards(v, mySeat));
   const sel = cardsByKeys(hand, selected);
   const card = sel.length === 1 && legal.has(sel[0]!) ? sel[0]! : null;
-  const t = v.trick;
-  const led = t && t.winner === null && t.plays[0] ? t.plays[0].card[1]! : null;
-  return playBar(
-    <span className="preview">{led ? `跟 ${SUIT_NAMES[led] ?? led}` : '由你领出'}</span>,
-    card ? <PlayingCard code={card} size="xs" /> : <span className="muted">点一张亮着的牌</span>,
-    card,
-  );
+  return playBar(card ? <PlayingCard code={card} size="xs" /> : null, card);
 }
 
 /** Own-hand click handler: one card at a time. */

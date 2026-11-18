@@ -418,7 +418,7 @@ export function RoomPage({ rid }: { rid: string }) {
     } else {
       controls = (
         <div className="controls controls-waiting">
-          <span className="muted">{inHand ? (hg!.folded[mySeat!] ? '已弃牌，等待本手结束' : '等待其他玩家行动') : '本手进行中，你从下一手开始参加'}</span>
+          {(!inHand || hg!.folded[mySeat!]) && <span className="muted">{inHand ? '已弃牌，等待本手结束' : '本手进行中，你从下一手开始参加'}</span>}
           <button className="btn btn-small" disabled={busy} onClick={leave}>
             离开
           </button>
@@ -459,7 +459,6 @@ export function RoomPage({ rid }: { rid: string }) {
     } else {
       controls = (
         <div className="controls controls-waiting">
-          <span className="muted">{g!.phase === 'bidding' ? '等待其他玩家叫分' : '等待其他玩家出牌'}</span>
           {selectedCards.length > 0 && preview && <span className="preview">{preview}</span>}
           <button className="btn btn-small" disabled={busy} onClick={leave}>
             离开

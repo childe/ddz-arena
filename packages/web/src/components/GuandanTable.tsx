@@ -109,7 +109,7 @@ function CenterInfo({ state, v }: { state: TableState; v: GuandanView }) {
   return (
     <div className="center-info gd-info">
       <div className="chips">
-        <span className="chip">{v.phase === 'return' ? '还贡中' : v.phase === 'playing' ? '出牌中' : '已结束'}</span>
+        <span className="chip chip-phase">{v.phase === 'return' ? '还贡中' : v.phase === 'playing' ? '出牌中' : '已结束'}</span>
         <span className="chip">第 {v.hand_no} 局</span>
         <span className={`chip gd-level-chip gd-team${v.level_team}`}>
           打 {levelLabel(v.level)}（{TEAM_NAMES[v.level_team]}）
@@ -253,7 +253,7 @@ function SeatPanel(props: GuandanTableProps & { seat: number; side?: boolean }) 
             <TeamBadge seat={seat} />
             {isPartner && <span className="badge badge-partner">队友</span>}
             {place > 0 && <span className={`badge gd-place gd-place-${place}`}>{PLACE_LABELS[place - 1]}</span>}
-            {info && <span className="badge">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
+            {info && <span className="badge badge-kind">{info.kind === 'human' ? '真人' : 'Bot'}</span>}
             {info && (!v || (v.phase === 'finished' && state.room?.status !== 'playing')) && (
               <span className={`badge ${info.ready ? 'badge-ok' : ''}`}>{info.ready ? '已准备' : '未准备'}</span>
             )}
@@ -261,8 +261,8 @@ function SeatPanel(props: GuandanTableProps & { seat: number; side?: boolean }) 
             {info && !info.connected && <span className="badge badge-warn">离线</span>}
           </div>
           <div className="seat-stats">
-            {v && <span>剩 {left} 张</span>}
-            {info && <span>积分 {info.score}</span>}
+            {v && <span className="stat-left">剩 {left} 张</span>}
+            {info && <span className="stat-score">积分 {info.score}</span>}
           </div>
         </div>
         {props.seatExtra?.(seat)}
@@ -406,7 +406,6 @@ export function GuandanControls({ state, mySeat, selected, setSelected, busy, on
     }
     return (
       <div className="controls controls-waiting">
-        <span className="muted">{pending ? `等待 ${name(pending.from)} 还贡` : '等待还贡'}</span>
         {leaveBtn}
       </div>
     );
@@ -416,7 +415,7 @@ export function GuandanControls({ state, mySeat, selected, setSelected, busy, on
     const place = placeOf(v, mySeat);
     return (
       <div className="controls controls-waiting">
-        <span className="muted">{place ? `你已出完（${PLACE_LABELS[place - 1]}），等待本局结束` : '等待其他玩家出牌'}</span>
+        {place && <span className="muted">你已出完（{PLACE_LABELS[place - 1]}），等待本局结束</span>}
         {sel.length > 0 && analysis.all.length > 0 && <span className="preview">{gdPatternLabel(analysis.def ?? analysis.all[0]!)}</span>}
         {leaveBtn}
       </div>

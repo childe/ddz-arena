@@ -12,7 +12,8 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <a className="brand" href={href.lobby()}>
-          <span className="brand-mark">♠</span> 斗地主 Bot 竞技场
+          <span className="brand-mark">♠</span>
+          <span className="brand-text"> 斗地主 Bot 竞技场</span>
         </a>
         <nav className="topnav">
           <a href={href.lobby()} className={route.page === 'lobby' && route.tab !== 'leaderboard' ? 'active' : ''}>

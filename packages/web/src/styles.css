@@ -869,6 +869,25 @@ select {
   border: 2px dashed rgba(255, 255, 255, 0.35);
   color: rgba(255, 255, 255, 0.5);
 }
+/* Whose turn it is, when no countdown replaces the avatar (timers hidden): a spinning ring. */
+.seat.on-turn .avatar {
+  position: relative;
+}
+.seat.on-turn .avatar::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #ffd43b;
+  border-right-color: #ffd43b;
+  animation: avatar-spin 1s linear infinite;
+}
+@keyframes avatar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .seat-hand {
   width: 100%;
   min-width: 0;
@@ -1788,11 +1807,12 @@ select {
 @media (max-width: 640px) {
   .holdem-table {
     aspect-ratio: auto;
-    height: 560px;
+    /* Leaves room under the table for the action buttons on a phone screen. */
+    height: 480px;
     min-height: 0;
   }
   .holdem-felt {
-    inset: 12% 14%;
+    inset: 10% 14%;
     border-radius: 45% / 30%;
   }
   .holdem-center {
@@ -1876,19 +1896,140 @@ select {
   .page {
     padding: 8px 8px 24px;
   }
+  /* Phones in portrait (about 390 x 660): every seat and the own hand on one screen. */
   .topbar {
-    padding: 6px 10px;
+    flex-wrap: nowrap;
+    padding: 6px 8px;
     gap: 6px;
+  }
+  .brand-text {
+    display: none;
+  }
+  .topnav {
+    gap: 0;
+    min-width: 0;
+  }
+  .topnav a {
+    padding: 4px 6px;
+  }
+  .guest-badge {
+    min-width: 0;
+    gap: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .guest-badge > span:first-child {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .table {
     grid-template-columns: minmax(72px, 0.8fr) minmax(0, 2fr) minmax(72px, 0.8fr);
-    padding: 8px 6px;
-    gap: 6px;
+    padding: 6px 4px;
+    gap: 4px;
     border-radius: 12px;
+  }
+  .table .seat {
+    padding: 4px;
+  }
+  .table .badge-kind,
+  .table .stat-score,
+  .table .seat-side .stat-left,
+  .table .chip-phase {
+    display: none;
+  }
+  /* Top and own seat: name and badges on one line, stats (and Gongzhu's taken cards) on the next. */
+  .table .seat-top .seat-meta,
+  .table .seat-main .seat-meta {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+  .table .seat-top .seat-badges,
+  .table .seat-main .seat-badges {
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .table .seat-badges .badge {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .table .seat-top .seat-side {
+    min-width: 50%;
+  }
+  .table .seat-main .seat-head {
+    flex-wrap: nowrap;
+  }
+  .table .seat-top .seat-stats,
+  .table .seat-main .seat-stats {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    white-space: nowrap;
+  }
+  .table .seat-left .seat-stats,
+  .table .seat-right .seat-stats {
+    flex-direction: column;
+    gap: 0;
+  }
+  /* Smaller cards where they are only read: the bottom cards and the top seat's card back. */
+  .center-info .bottom-cards .hand {
+    --cw: var(--cw-xs);
+  }
+  .center-info .bottom-cards .card,
+  .seat-top .back-stack .card {
+    --w: var(--cw-xs);
+    --h: var(--ch-xs);
+  }
+  .seat-top .back-count {
+    font-size: 14px;
+  }
+  .table .play-slot {
+    min-height: calc(var(--ch-sm) + 16px);
+  }
+  .table .pattern-name {
+    font-size: 11px;
+    line-height: 14px;
+  }
+  /* Four seats: the left and right plays side by side, a cross like the seats. */
+  .table-4 .center-plays {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    flex: 0 0 auto;
+  }
+  /* Own hand in two rows: the second row covers the lower part of the first, whose corners stay visible. */
+  .seat-mine .hand-rows > .hand-lg + .hand-lg {
+    margin-top: calc(var(--ch-lg) * -0.45);
   }
   .controls .btn {
     min-width: 56px;
     padding: 6px 10px;
+  }
+  /* One header line, so the table starts higher; the connection pill already says 对局中. */
+  .room-head {
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .room-head > .status,
+  .room-head > .muted {
+    display: none;
+  }
+  .room-head h2 {
+    min-width: 0;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .room-head .btn-dissolve {
+    margin-left: 0;
+  }
+  .room-head > .badge,
+  .room-head .sock,
+  .room-head .btn-dissolve {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 }
 
@@ -2240,20 +2381,10 @@ select {
   gap: 8px;
   width: 100%;
 }
-.gz-bar-info,
 .gz-bar-side {
   display: flex;
   align-items: center;
   min-width: 0;
-  white-space: nowrap;
-}
-.gz-bar-info {
-  justify-content: flex-end;
-}
-.gz-bar-info > *,
-.gz-bar-side > .muted {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .gz-expose-opts {
   display: inline-flex;
@@ -2307,5 +2438,34 @@ select {
   }
   .gz-taken .hand-rows {
     max-width: calc(var(--cw-xs) * 4);
+  }
+  .gz-table {
+    min-height: 0;
+  }
+  .gz-table .seat-top .gz-taken,
+  .gz-table .seat-main .gz-taken {
+    margin-top: 0;
+  }
+  .gz-info .chips {
+    width: 100%;
+    height: 20px;
+    flex-wrap: nowrap;
+  }
+  .gz-info .chip {
+    flex-shrink: 0;
+  }
+  .gz-info .chip:last-child {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .gz-table .play-slot {
+    height: calc(var(--ch-sm) + 16px);
+  }
+  .gz-table .gz-played .card {
+    --w: var(--cw-sm);
+    --h: var(--ch-sm);
+  }
+  .gz-seat .seat-hand {
+    margin-top: 2px;
   }
 }
