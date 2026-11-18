@@ -126,8 +126,6 @@ function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 
             </span>
           </div>
         );
-    } else if (g.turn === seat && g.phase === 'playing') {
-      body = <span className="bubble thinking">思考中…</span>;
     }
   }
   return (

@@ -177,8 +177,8 @@ function PlaySlot({ state, seat, pos }: { state: TableState; seat: number; pos: 
       );
   } else if (place) {
     body = <span className={`bubble gd-place gd-place-${place}`}>{PLACE_LABELS[place - 1]}</span>;
-  } else if (v.turn === seat) {
-    body = <span className="bubble thinking">{v.phase === 'return' ? '还贡中…' : '思考中…'}</span>;
+  } else if (v.turn === seat && v.phase === 'return') {
+    body = <span className="bubble thinking">还贡中…</span>;
   }
   return (
     <div className={`play-slot play-${pos}`} aria-label={`${seatName(state, seat)} 的出牌`}>

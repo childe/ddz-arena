@@ -1840,6 +1840,30 @@ select {
     display: none;
   }
 }
+@media (max-width: 480px) {
+  /* Table plus both control rows fit on an iPhone screen without scrolling. */
+  .holdem-table {
+    height: 420px;
+    /* Vertical seat radius: keeps the top and bottom seats inside the shorter table. */
+    --h-seat-ry: 33.5%;
+  }
+  .holdem-controls {
+    padding: 6px 8px;
+  }
+  .h-raise-row {
+    gap: 6px;
+  }
+  .h-raise-slider {
+    flex: 1 1 calc(100% - 76px);
+    min-width: 0;
+  }
+  .h-raise-input {
+    width: 64px;
+  }
+  .h-raise-row .btn-small {
+    padding: 3px 8px;
+  }
+}
 
 /* ---------- markdown docs ---------- */
 
@@ -2467,5 +2491,33 @@ select {
   }
   .gz-seat .seat-hand {
     margin-top: 2px;
+  }
+}
+
+/* ---------- iPhone safe areas ---------- */
+/* index.html sets viewport-fit=cover, so keep content clear of the notch and the home indicator. */
+.topbar {
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+.page {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+.toaster {
+  bottom: calc(20px + env(safe-area-inset-bottom));
+}
+@media (max-width: 480px) {
+  .topbar {
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .page {
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
   }
 }

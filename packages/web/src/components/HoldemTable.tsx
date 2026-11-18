@@ -51,7 +51,7 @@ export function HoldemTable(props: HoldemTableProps) {
         </div>
         {Array.from({ length: n }, (_, seat) => {
           const p = pos(seat);
-          const seatStyle = { left: `${50 + 41 * p.cos}%`, top: `${50 + 36 * p.sin}%` } as CSSProperties;
+          const seatStyle = { left: `${50 + 41 * p.cos}%`, top: `calc(50% + ${p.sin} * var(--h-seat-ry, 36%))` } as CSSProperties;
           const betStyle = { left: `${50 + 24 * p.cos}%`, top: `${50 + 20 * p.sin}%` } as CSSProperties;
           const bet = h?.bets[seat] ?? 0;
           return (
