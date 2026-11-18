@@ -2521,3 +2521,42 @@ select {
     padding-bottom: calc(24px + env(safe-area-inset-bottom));
   }
 }
+
+/* ---------- token notice (after creating a guest) ---------- */
+.token-notice {
+  width: min(92vw, 440px);
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.token-notice::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+.token-notice h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.token-notice p {
+  margin: 0 0 8px;
+  line-height: 1.55;
+  font-size: 14px;
+}
+.token-notice-value {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 10px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.token-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.token-notice .token-notice-later {
+  margin: 10px 0 0;
+  font-size: 12px;
+}

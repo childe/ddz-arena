@@ -1,4 +1,4 @@
-import { GuestBadge } from './components/Guest.tsx';
+import { GuestBadge, TokenNotice } from './components/Guest.tsx';
 import { Toaster } from './components/Toast.tsx';
 import { DocsPage } from './pages/DocsPage.tsx';
 import { Lobby } from './pages/Lobby.tsx';
@@ -39,6 +39,7 @@ export function App() {
           </div>
         )}
       </main>
+      <TokenNotice />
       <Toaster />
     </div>
   );

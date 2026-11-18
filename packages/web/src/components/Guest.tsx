@@ -1,9 +1,17 @@
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { type Account, ApiError, api, errorText, forgetKnown, loadKnown } from '../api.ts';
 import { setGuest, useGuest } from '../guest.ts';
 import { toast } from './Toast.tsx';
 
 const NAME_RE = /^[\p{L}\p{N}_-]{1,24}$/u;
+
+// The guest just created in this page load; TokenNotice shows its token until dismissed.
+let fresh: Account | null = null;
+const freshListeners = new Set<() => void>();
+function setFresh(acc: Account | null) {
+  fresh = acc;
+  freshListeners.forEach((l) => l());
+}
 
 /** Check a token with GET /me and make it the current identity. */
 async function signIn(token: string): Promise<Account> {
@@ -41,7 +49,7 @@ export function GuestForm({ compact }: { compact?: boolean }) {
       try {
         const acc = await api.createGuest(n);
         setGuest(acc);
-        toast(`欢迎，${acc.name}。点右上角「复制 token」保存好，换浏览器时用它登录`, 'info');
+        setFresh(acc);
       } catch (err) {
         toast(err instanceof ApiError && err.code === 'NAME_TAKEN' ? `「${n}」已被占用；如果是你的身份，请用 token 登录` : errorText(err));
       }
@@ -123,6 +131,62 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Shown once after a guest is created: the token is the only way back to this identity. */
+export function TokenNotice() {
+  const acc = useSyncExternalStore(
+    (cb) => {
+      freshListeners.add(cb);
+      return () => {
+        freshListeners.delete(cb);
+      };
+    },
+    () => fresh,
+  );
+  const ref = useRef<HTMLDialogElement>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const d = ref.current;
+    if (acc && d && !d.open) {
+      setCopied(false);
+      d.showModal();
+    }
+  }, [acc]);
+  if (!acc) return null;
+  return (
+    <dialog ref={ref} className="token-notice" onClose={() => setFresh(null)} aria-labelledby="token-notice-title">
+      <h3 id="token-notice-title">欢迎，{acc.name}！请保存你的 token</h3>
+      <p>token 相当于这个身份的密码，以后可以用它登录。</p>
+      <p>
+        换了浏览器、换了手机，或者清空了浏览器缓存后，本机会忘掉这个身份。这时在「用 token 登录」里输入 token，就能登录回原来的身份。
+      </p>
+      <p className="muted">不要把 token 发给别人：拿到它的人可以用你的身份打牌。</p>
+      <input
+        className="token-notice-value"
+        readOnly
+        value={acc.token}
+        aria-label="token"
+        onFocus={(e) => e.currentTarget.select()}
+      />
+      <div className="token-notice-actions">
+        <button
+          type="button"
+          className="btn"
+          onClick={async () => {
+            if (await copyText(acc.token)) setCopied(true);
+            else toast('复制失败，请长按上面的 token 手动复制');
+          }}
+        >
+          {copied ? '已复制' : '复制 token'}
+        </button>
+        <button type="button" className="btn btn-primary" onClick={() => ref.current?.close()}>
+          我已保存
+        </button>
+      </div>
+      <p className="muted token-notice-later">之后也可以点右上角「复制 token」再次复制。</p>
+    </dialog>
+  );
 }
 
 export function GuestBadge() {
