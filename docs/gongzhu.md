@@ -31,6 +31,7 @@
 1. **发牌**：洗牌后每人 13 张。
 2. **首出**：一场的第一局由持 `2C` 的人先出（可以出任意牌）；之后由上一局收到猪的人先出。
 3. **亮牌**：从首出者开始按座位顺序，每人轮流决定亮出手中 `QS` / `JD` / `TC` / `AH` 中的任意几张（可以不亮）。所有人都要做一次决定。亮出的牌公开。
+   - **被迫亮牌**：4 人都决定完以后，如果这 4 张里已经亮了 3 张，第 4 张自动替持有人亮出（不论他之前是否已经决定不亮）。
 4. **出牌**：首出者领出一张，其余人按顺序各出一张。
    - 有领出花色的牌就必须跟这门花色；没有时可以出任意牌（不限制何时出红桃或猪）。
    - **亮牌的限制**：亮出的牌在这门花色第一次被领出的那一轮里不能出（领出和跟牌都不行），除非它是手中这门花色唯一的一张。这门花色领出过一轮以后就没有限制。
@@ -62,7 +63,7 @@
 
 - `game.started`：`{"game":"gongzhu","players","hand_no":1,"totals":[0,0,0,0],"first_leader":2,"cards_left":[13,13,13,13]}`，私有字段 `hand`。
 - `turn`：`{"seat","phase":"expose"|"playing","trick_no","led_suit","trick"}`。`trick` 是进行中的这一墩 `{"leader","plays":[{"seat","card"}],"winner":null}`，还没人出时为 null；`led_suit` 是这一墩领出的花色，自己领出时为 null。
-- `exposed`：`{"seat","cards":["QS","AH"],"auto"}`（`cards` 可以为空）。
+- `exposed`：`{"seat","cards":["QS","AH"],"auto"}`（`cards` 是这个座位亮出的全部牌，可以为空）。被迫亮牌时紧跟在第 4 人的 `exposed` 后面再发一条：`{"seat":持有人,"cards":[他亮出的全部牌],"auto":true,"forced":"AH"}`。
 - `played`：`{"seat","card","trick_no","cards_left","auto"}`。
 - `trick.won`：`{"seat":赢家,"trick_no","plays":[{"seat","card"}],"cards":[这一墩里的分牌]}`，紧跟在这一墩第 4 张的 `played` 后面。
 - `game.finished`：`{"result":{"points":[-100,-150,200,-50],"totals_before":[...],"totals_after":[...],"taken":[["QS"],[...],[...],[...]],"exposed":[[],["AH"],[],[]],"all_hearts":null,"pig":0,"losers":[],"match_over":false,"scores":[-30,-50,90,-10]},"hands","seed"}`。`hands` 是提前结束时各人剩下的牌。

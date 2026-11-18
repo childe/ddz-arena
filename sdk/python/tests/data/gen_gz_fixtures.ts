@@ -72,6 +72,7 @@ for (let i = 0; i < 150; i++) {
     first_leader: g.firstLeader,
     expose_order: exposeOrder,
     exposed: g.exposed,
+    forced: g.forcedExpose,
     plays,
     result: g.result,
   });

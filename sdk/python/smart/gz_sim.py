@@ -88,6 +88,10 @@ def play_hand(
             stats["fallbacks"] = stats.get("fallbacks", 0) + 1
             cards = []
         exposed[s] = [c for c in rules_gz.EXPOSABLE if c in cards]
+    forced = rules_gz.forced_expose(hands, exposed)
+    if forced:
+        s, card = forced
+        exposed[s] = [c for c in rules_gz.EXPOSABLE if c in exposed[s] or c == card]
 
     led_before: set = set()
     turn = leader

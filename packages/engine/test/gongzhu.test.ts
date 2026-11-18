@@ -108,6 +108,56 @@ describe('GongzhuGame', () => {
     expect(g.exposed).toEqual([['QS'], [], ['TC'], []]);
   });
 
+  it('three exposed: the fourth is exposed for its holder when the last seat has decided', () => {
+    // bySuit: seat 0 holds QS, 1 AH, 2 TC, 3 JD; seat 2 decides first.
+    let g = new GongzhuGame('s', newGzMatch(), bySuit());
+    g.expose(2, ['TC']);
+    g.expose(3, []);
+    g.expose(0, ['QS']);
+    expect(g.forcedExpose).toBeNull();
+    g.expose(1, ['AH']);
+    // Seat 3 had already said no.
+    expect(g.forcedExpose).toEqual({ seat: 3, card: 'JD' });
+    expect(g.exposed).toEqual([['QS'], ['AH'], ['TC'], ['JD']]);
+    expect(g.phase).toBe('playing');
+
+    // The holder decides last and does not expose it.
+    g = new GongzhuGame('s', newGzMatch(), bySuit());
+    g.expose(2, ['TC']);
+    g.expose(3, ['JD']);
+    g.expose(0, ['QS']);
+    g.expose(1, []);
+    expect(g.forcedExpose).toEqual({ seat: 1, card: 'AH' });
+    expect(g.exposed[1]).toEqual(['AH']);
+
+    // One seat holds all four and exposes three: the fourth joins them, in the usual order.
+    const deal = bySuit();
+    const swap = (a: GzSeat, ca: string, b: GzSeat, cb: string) => {
+      deal[a] = deal[a].map((x) => (x === ca ? cb : x));
+      deal[b] = deal[b].map((x) => (x === cb ? ca : x));
+    };
+    swap(0, '2S', 3, 'JD');
+    swap(0, '3S', 2, 'TC');
+    swap(0, '4S', 1, 'AH');
+    g = new GongzhuGame('s', newGzMatch(), deal);
+    expect(g.exposable(0)).toEqual(['QS', 'JD', 'TC', 'AH']);
+    for (const s of [2, 3] as GzSeat[]) g.expose(s, []);
+    g.expose(0, ['AH', 'QS', 'TC']);
+    g.expose(1, []);
+    expect(g.forcedExpose).toEqual({ seat: 0, card: 'JD' });
+    expect(g.exposed[0]).toEqual(['QS', 'JD', 'TC', 'AH']);
+  });
+
+  it('two or four exposed: nothing is forced', () => {
+    let g = new GongzhuGame('s', newGzMatch(), bySuit());
+    for (const [s, cards] of [[2, ['TC']], [3, []], [0, ['QS']], [1, []]] as [GzSeat, string[]][]) g.expose(s, cards);
+    expect(g.forcedExpose).toBeNull();
+    expect(g.exposed).toEqual([['QS'], [], ['TC'], []]);
+    g = new GongzhuGame('s', newGzMatch(), bySuit());
+    for (const [s, cards] of [[2, ['TC']], [3, ['JD']], [0, ['QS']], [1, ['AH']]] as [GzSeat, string[]][]) g.expose(s, cards);
+    expect(g.forcedExpose).toBeNull();
+  });
+
   it('the previous pig taker leads', () => {
     const g = new GongzhuGame('s', { handNo: 2, totals: [0, 0, 0, 0], leader: 3 }, bySuit());
     expect(g.firstLeader).toBe(3);

@@ -10,6 +10,8 @@ highest, and suits never beat each other (no trumps).
 * Exposed cards (亮牌: ``QS`` / ``JD`` / ``TC`` / ``AH``) may not be led or played to follow
   suit in the first round of their suit, unless it is the only card of that suit in hand.
   Discarding one on another suit's trick is always allowed.
+* When all four have decided and three of these cards are exposed, the fourth is exposed for
+  its holder (:func:`forced_expose`).
 * :func:`score_taken` / :func:`settle` score a hand exactly like the engine's ``scoreTaken`` /
   ``settleGz``.
 
@@ -93,6 +95,19 @@ def exposable(hand: Iterable[str]) -> List[str]:
     """Cards in ``hand`` that may be exposed, in the engine's order."""
     h = set(hand)
     return [c for c in EXPOSABLE if c in h]
+
+
+def forced_expose(
+    hands: Sequence[Collection[str]], exposed: Sequence[Collection[str]]
+) -> Optional[Tuple[int, str]]:
+    """``(seat, card)`` when three of the four exposable cards are exposed: the fourth is then
+    exposed for the seat holding it once every seat has decided. None otherwise."""
+    shown = {c for e in exposed for c in e}
+    if len(shown) != len(EXPOSABLE) - 1:
+        return None
+    card = next(c for c in EXPOSABLE if c not in shown)
+    seat = next(s for s in range(SEATS_GZ) if card in hands[s])
+    return seat, card
 
 
 # ------------------------------------------------------------------ playing

@@ -618,7 +618,7 @@ WebSocket 同样可以发 `{"op":"action","req_id":"1","game_id":"g_x","action":
 ### 11.2 一局的流程
 
 1. 发牌，每人 13 张。一场的第一局由持 `2C` 的人先出（可以出任意牌），之后由上一局收到猪的人先出（`first_leader`）。
-2. **亮牌**：从首出者开始轮流，每人调用一次 `/expose`，亮出手中 `QS` / `JD` / `TC` / `AH` 中的任意几张，或 `cards: []` 不亮。
+2. **亮牌**：从首出者开始轮流，每人调用一次 `/expose`，亮出手中 `QS` / `JD` / `TC` / `AH` 中的任意几张，或 `cards: []` 不亮。4 人都决定完以后，如果这 4 张里已经亮了 3 张，第 4 张自动替持有人亮出。
 3. **出牌**：领出一张，其余人依次各出一张。有领出花色的牌必须跟；没有时可以出任意牌。亮出的牌在这门花色第一次被领出的那一轮里不能出（领出和跟牌都不行），除非它是手中这门花色唯一的一张。领出花色中最大的牌赢这一墩，收走分牌并领出下一墩。
 4. 13 墩打完，或 16 张分牌都已被收走时，本局结束。
 
@@ -645,7 +645,7 @@ WebSocket 同样可以发 `{"op":"action","req_id":"1","game_id":"g_x","action":
 |---|---|
 | `game.started` | `{"game":"gongzhu","players","hand_no":1,"totals":[0,0,0,0],"first_leader":2,"cards_left":[13,13,13,13]}`，只发给你的还有 `hand` |
 | `turn` | `{"seat","phase":"expose"\|"playing","trick_no","led_suit","trick"}`；`trick` 是进行中的这一墩 `{"leader","plays":[{"seat","card"}],"winner":null}`，还没人出时为 null |
-| `exposed` | `{"seat","cards":["QS"],"auto"}` |
+| `exposed` | `{"seat","cards":["QS"],"auto"}`；`cards` 是这个座位亮出的全部牌。被迫亮第 4 张时再发一条，带 `"forced":"AH"`、`"auto":true` |
 | `played` | `{"seat","card","trick_no","cards_left","auto"}` |
 | `trick.won` | `{"seat":赢家,"trick_no","plays":[{"seat","card"}],"cards":[这一墩里的分牌]}`，紧跟这一墩最后一张的 `played` |
 | `game.finished` | `{"result":{"points":[-100,-150,200,-50],"totals_before","totals_after","taken":[["QS"],...],"exposed":[[],["AH"],[],[]],"all_hearts":null,"pig":0,"losers":[],"match_over":false,"scores":[-30,-50,90,-10]},"hands","seed"}` |

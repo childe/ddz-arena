@@ -132,6 +132,8 @@ export class GongzhuGame {
   exposed: Four<Card[]> = [[], [], [], []];
   /** Seats that have made their expose decision. */
   private exposeCount = 0;
+  /** Set when three of the four exposable cards were exposed, so the fourth was exposed for its holder. */
+  forcedExpose: { seat: GzSeat; card: Card } | null = null;
   /** Completed tricks. */
   tricks: GzTrick[] = [];
   /** The trick in progress, or null between tricks. */
@@ -182,7 +184,10 @@ export class GongzhuGame {
     return EXPOSABLE.filter((c) => this.hands[seat].includes(c));
   }
 
-  /** Exposes any subset of the seat's exposable cards (empty = none). Seats decide in turn. */
+  /**
+   * Exposes any subset of the seat's exposable cards (empty = none). Seats decide in turn. When the last seat
+   * has decided and three of the four are exposed, the fourth is exposed too, whoever holds it.
+   */
   expose(seat: GzSeat, cards: Card[]): Card[] {
     this.expect('expose', seat);
     const bad = cards.filter((c) => !isValidCard(c));
@@ -194,12 +199,22 @@ export class GongzhuGame {
     this.exposed[seat] = EXPOSABLE.filter((c) => cards.includes(c));
     this.exposeCount++;
     if (this.exposeCount === 4) {
+      this.forceFourth();
       this.phase = 'playing';
       this.turn = this.firstLeader;
     } else {
       this.turn = next(seat);
     }
     return this.exposed[seat];
+  }
+
+  private forceFourth() {
+    const shown = this.exposed.flat();
+    if (shown.length !== EXPOSABLE.length - 1) return;
+    const card = EXPOSABLE.find((c) => !shown.includes(c))!;
+    const seat = GZ_SEATS.find((s) => this.hands[s].includes(card))!;
+    this.exposed[seat] = EXPOSABLE.filter((c) => c === card || this.exposed[seat].includes(c));
+    this.forcedExpose = { seat, card };
   }
 
   /** True if `card` is exposed and its suit has not been led in an earlier trick. */

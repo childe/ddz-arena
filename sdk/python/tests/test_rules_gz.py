@@ -13,6 +13,7 @@ from ddz_sdk.rules_gz import (
     HAND_SIZE_GZ,
     check_play,
     exposable,
+    forced_expose,
     heart_points,
     is_scoring,
     legal_cards,
@@ -42,6 +43,14 @@ def test_deck_and_cards():
         "2D",
     ]
     assert exposable(["TC", "AH", "2S", "QS"]) == ["QS", "TC", "AH"]
+
+
+def test_forced_expose():
+    hands = [["QS", "2C"], ["AH"], ["TC", "JD"], ["3D"]]
+    assert forced_expose(hands, [["QS"], [], ["TC", "JD"], []]) == (1, "AH")
+    assert forced_expose(hands, [["QS"], ["AH"], ["TC"], []]) == (2, "JD")
+    assert forced_expose(hands, [["QS"], [], ["TC"], []]) is None
+    assert forced_expose(hands, [["QS"], ["AH"], ["TC", "JD"], []]) is None
 
 
 def test_heart_values():
@@ -177,6 +186,10 @@ def test_whole_hands_match_engine():
         exposed = g["exposed"]
         for s in range(4):
             assert all(c in exposable(g["hands"][s]) for c in exposed[s])
+        f = g["forced"]
+        chosen = [[c for c in e if not f or c != f["card"]] for e in exposed]
+        want = (f["seat"], f["card"]) if f else None
+        assert forced_expose(g["hands"], chosen) == want
         led_before = set()
         trick = []
         taken = [[], [], [], []]

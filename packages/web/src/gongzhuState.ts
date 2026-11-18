@@ -8,6 +8,8 @@ export interface GzExposeRecord {
   seat: number;
   cards: Card[];
   auto?: boolean;
+  /** Exposed for this seat because the other three were exposed (`cards` then lists all its exposed cards). */
+  forced?: Card;
 }
 
 export interface GongzhuView {
@@ -166,7 +168,7 @@ export function applyGongzhuEvent(
     case 'exposed': {
       const cards: Card[] = Array.isArray(d.cards) ? d.cards : [];
       g.exposed = g.exposed.map((e, i) => (i === d.seat ? [...cards] : e));
-      g.exposes = [...g.exposes, { seat: d.seat, cards, auto: d.auto }];
+      g.exposes = [...g.exposes, { seat: d.seat, cards, auto: d.auto, forced: typeof d.forced === 'string' ? d.forced : undefined }];
       if (g.turn === d.seat) g.remaining_ms = null;
       return g;
     }

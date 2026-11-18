@@ -544,6 +544,22 @@ describe('Gongzhu', () => {
     // Second hand: totals carried, the pig taker leads.
     const started2 = await spec.wait((e) => e.type === 'game.started' && e.game_id !== gid, 10000);
     expect(started2.data).toMatchObject({ hand_no: 2, totals: fin1.result.totals_after, first_leader: fin1.result.pig });
+    // Every seat exposes all it can but AH: three exposed, so AH is exposed for its holder.
+    const gid2 = started2.game_id;
+    const lead2 = started2.data.first_leader as number;
+    for (let k = 0; k < 4; k++) {
+      const seat = (lead2 + k) % 4;
+      const mine = (await api('GET', `/api/v1/games/${gid2}/state`, bots[seat]!.token)).body.legal.exposable as string[];
+      const r = await api('POST', `/api/v1/games/${gid2}/expose`, bots[seat]!.token, { cards: mine.filter((c) => c !== 'AH') });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    }
+    const forced = await spec.wait((e) => e.type === 'exposed' && e.game_id === gid2 && e.data.forced);
+    expect(forced.data).toMatchObject({ forced: 'AH', auto: true });
+    expect(forced.data.cards).toContain('AH');
+    const after = (await api('GET', `/api/v1/games/${gid2}`)).body;
+    expect(after.phase).toBe('playing');
+    expect(after.exposed.flat().sort()).toEqual(['AH', 'JD', 'QS', 'TC']);
+    expect(after.exposed[forced.data.seat]).toEqual(forced.data.cards);
     const fin2 = await playHand(bots, started2.game_id);
     expect(fin2.result.totals_before).toEqual(fin1.result.totals_after);
     const lb = (await api('GET', '/api/v1/leaderboard?game=gongzhu')).body;

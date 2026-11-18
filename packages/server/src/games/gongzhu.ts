@@ -68,8 +68,13 @@ class GongzhuSession implements GameSession {
   }
 
   private expose(seat: number, cards: Card[], auto: boolean): Emit[] {
-    const shown = this.g.expose(seat as GzSeat, cards);
-    return [{ type: 'exposed', data: { seat, cards: shown, auto } }];
+    const g = this.g;
+    const shown = [...g.expose(seat as GzSeat, cards)];
+    const events: Emit[] = [{ type: 'exposed', data: { seat, cards: shown, auto } }];
+    // Three exposed: the fourth is exposed for its holder, with all that seat's exposed cards like any `exposed`.
+    const f = g.forcedExpose;
+    if (f) events.push({ type: 'exposed', data: { seat: f.seat, cards: [...g.exposed[f.seat]], auto: true, forced: f.card } });
+    return events;
   }
 
   private play(seat: number, card: Card, auto: boolean): Emit[] {

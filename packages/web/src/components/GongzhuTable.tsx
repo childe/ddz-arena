@@ -429,10 +429,15 @@ export function GongzhuHistory({ state }: { state: TableState }) {
       <div className="log-row log-sys">
         第 {v.hand_no} 局开始，{name(v.first_leader)} 先出
       </div>
-      {v.exposes.map((e) => (
-        <div key={`x${e.seat}`} className="log-row log-sys">
+      {v.exposes.map((e, i) => (
+        <div key={`x${i}`} className="log-row log-sys">
           <b>{name(e.seat)}</b>{' '}
-          {e.cards.length === 0 ? (
+          {e.forced ? (
+            <>
+              被迫亮 {GZ_CARD_NAMES[e.forced] ?? e.forced}（另外三张都亮了）
+              <Hand cards={[e.forced]} size="xs" spread={0.6} className="inline-hand" />
+            </>
+          ) : e.cards.length === 0 ? (
             <span className="muted">不亮</span>
           ) : (
             <>
@@ -440,7 +445,7 @@ export function GongzhuHistory({ state }: { state: TableState }) {
               <Hand cards={e.cards} size="xs" spread={0.6} className="inline-hand" />
             </>
           )}
-          {e.auto && <span className="muted">（代打）</span>}
+          {e.auto && !e.forced && <span className="muted">（代打）</span>}
         </div>
       ))}
       {tricks.map((t, i) => {
