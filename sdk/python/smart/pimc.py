@@ -1,9 +1,9 @@
-"""Mid-game Monte Carlo for the smart 3-player Dou Dizhu bot.
+"""Mid-game Monte Carlo for the smart Dou Dizhu bots (3 and 4 players).
 
 Before the endgame search applies (see endgame.py) the bot otherwise plays by rules alone.
-With Monte Carlo on (``Smart3Bot.PIMC_SAMPLES`` > 0) it instead:
+With Monte Carlo on (``PIMC_SAMPLES`` > 0) it instead:
 
-1. Samples the hidden hands: the unseen cards dealt at random to the other two seats, the
+1. Samples the hidden hands: the unseen cards dealt at random to the other seats, the
    bottom cards the landlord has not played yet kept in the landlord's hand
    (:func:`endgame.sample_hands`).
 2. Weighs each sampled deal by how well it explains what the opponents did
@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import endgame
 from ddz_sdk import GameState, Move
 from ddz_sdk.cards import rank_counts, remove_cards, sort_cards
-from ddz_sdk.rules import RuleError, lowest_single, resolve
+from ddz_sdk.rules import RuleError, lowest_single
 
 BOMBS = ("bomb", "rocket")
 Hands = Tuple[Tuple[str, ...], ...]
@@ -42,7 +42,7 @@ def rollout(
 ) -> float:
     """Play ``first`` (None = pass) for ``st.seat`` on the deal ``hands``, finish the game
     with ``policy`` in every seat, and return ``st.seat``'s result: +-1 for a farmer,
-    +-2 for the landlord, times 2 per bomb played from now on and 2 for a spring; with
+    +-2 for the landlord (+-3 with 4 players), times 2 per bomb played from now on and 2 for a spring; with
     ``win_only`` just +1 for a win and -1 for a loss."""
     n = st.num_seats
     cur = [list(h) for h in hands]
@@ -84,12 +84,14 @@ def rollout(
         if cards:
             hint = move.pattern.type if isinstance(move, Move) else None
             try:
-                pattern = resolve(cards, to_beat["pattern"] if to_beat else None, hint)
+                pattern = st.resolve(
+                    cards, to_beat["pattern"] if to_beat else None, hint
+                )
             except RuleError:
                 cards = []
         if not cards and to_beat is None:
             cards = lowest_single(cur[turn])
-            pattern = resolve(cards, None)
+            pattern = st.resolve(cards, None)
         if cards:
             cur[turn] = remove_cards(cur[turn], cards)
             entry = {"seat": turn, "cards": cards, "pattern": pattern.to_api()}
@@ -110,13 +112,13 @@ def rollout(
     spring = landlord_wins and all(plays[s] == 0 for s in range(n) if s != ll)
     anti = not landlord_wins and plays[ll] == 1
     unit = 2**bombs * (2 if spring or anti else 1)
-    mine = 2 * unit if st.seat == ll else unit
+    mine = (n - 1) * unit if st.seat == ll else unit
     return mine if (st.seat == ll) == landlord_wins else -mine
 
 
 # ---------------------------------------------------------------- inference
 def dealt_hand(st: GameState, hands: Hands, seat: int) -> List[str]:
-    """The 17 cards ``seat`` was dealt in the deal ``hands``: what it holds now plus what
+    """The cards ``seat`` was dealt in the deal ``hands``: what it holds now plus what
     it played, without the bottom cards for the landlord."""
     cards = list(hands[seat])
     for h in st.history:

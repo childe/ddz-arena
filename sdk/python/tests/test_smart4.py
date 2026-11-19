@@ -7,9 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "smart"))
 
-from ddz4_sim import duplicate, play_game  # noqa: E402
+from ddz4_sim import duplicate, make_factory, play_game  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
+import pimc  # noqa: E402
 from smart4_bot import Smart4Bot, decompose  # noqa: E402
 
 from ddz_sdk import GameState  # noqa: E402
@@ -96,3 +97,57 @@ def test_duplicate_beats_random():
     res = duplicate(Smart4Bot, RandomBot, range(5))
     assert res["games"] == 20
     assert res["unit_edge"] > 0
+
+
+def test_bid_by_win_chance():
+    bot = Smart4Bot()
+    strong = parse_short("22222AAAAKKKQQQJJ345") + ["RJ", "RJ", "BJ", "BJ"]
+    weak = parse_short("3355779JKQ4468TQ3579JK46")
+    assert bot.win_chance(strong) > 0.7
+    st = GameState(game="ddz4", seat=0, hand=strong, phase="bidding")
+    assert bot.on_bid(st) == 3
+    # Someone already bid 1: every cutoff rises by BID_RAISE.
+    st = GameState(
+        game="ddz4",
+        seat=1,
+        hand=weak,
+        phase="bidding",
+        bids=[{"seat": 0, "score": 1}],
+        high_bid=1,
+    )
+    assert bot.win_chance(weak) < 0.5 and bot.on_bid(st) == 0
+
+
+def test_rollout_pays_the_landlord_three_times():
+    # Seat 0 is the landlord and goes out at once with its pair.
+    st = GameState(
+        game="ddz4",
+        seat=0,
+        hand=parse_short("KK"),
+        phase="playing",
+        landlord=0,
+        high_bid=1,
+        to_beat=None,
+        can_pass=False,
+        cards_left=[2, 3, 3, 3],
+        history=[],
+    )
+    hands = (tuple(st.hand),) + tuple(
+        tuple(parse_short(h)) for h in ("345", "678", "9TJ")
+    )
+    pair = next(m for m in st.legal_moves() if m.pattern.type == "pair")
+    rule = Smart4Bot().rule_move
+    assert pimc.rollout(st, hands, pair, rule) == 6  # 3x, doubled for a spring
+    assert pimc.rollout(st, hands, pair, rule, win_only=True) == 1
+
+
+def test_variant_and_monte_carlo_keep_games_legal():
+    make = make_factory("smart4:PIMC_SAMPLES=4,PIMC_POOL=8")
+    assert make().PIMC_SAMPLES == 4 and Smart4Bot.PIMC_SAMPLES == 0
+    stats = {}
+    for seed in range(2):
+        r = play_game(
+            [make(), Smart4Bot(), GreedyBot(), Smart4Bot()], seed, stats=stats
+        )
+        assert sum(r["scores"]) == 0
+    assert stats == {}
