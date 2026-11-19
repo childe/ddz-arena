@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import random
 import sys
+import time
 from dataclasses import dataclass
 from math import comb
 from functools import lru_cache
@@ -45,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ddz_sdk import Bot, GameState, Move, Pattern, register_bot  # noqa: E402
 import endgame  # noqa: E402
+import pimc  # noqa: E402
 from ddz_sdk.cards import (  # noqa: E402
     RANK_2,
     RANK_A,
@@ -248,6 +251,25 @@ class Smart3Bot(Bot):
 
     #: bid when the 17-card hand strength reaches these values (see :meth:`strength`)
     BID_THRESHOLDS = ((3, 0.0), (2, -1.0), (1, -2.0))
+    #: bid by the estimated chance to win as landlord instead (:meth:`win_chance`): bid
+    #: when it reaches these values, each raised by BID_RAISE once an opponent has bid
+    #: (that hand is strong, so ours wins less often than against random hands)
+    BID_BY_WIN = True
+    BID_WIN_CUTS = ((3, 0.55), (2, 0.45), (1, 0.35))
+    BID_RAISE = 0.1
+    #: landlord win model: intercept and one weight per BID_FEATURES (ddz3_bidfit.py)
+    BID_MODEL: Tuple[float, ...] = (
+        -0.7653,  # intercept
+        -0.4277,  # split cost
+        0.1970,  # groups
+        0.9897,  # red joker
+        0.7661,  # black joker
+        0.3679,  # twos
+        0.1772,  # aces
+        0.0770,  # kings
+        0.4362,  # bombs
+        -0.1350,  # rocket
+    )
     #: decomposition damage accepted to beat an opponent: landlord, farmer, the farmer
     #: just before the landlord (the last one who can stop it)
     LANDLORD_DAMAGE = 0.4
@@ -278,19 +300,42 @@ class Smart3Bot(Bot):
     #: the farmer before the landlord tops up the other farmer's single / pair below this
     #: rank (-1: never) when that does not hurt its own hand
     TOP_UP_BELOW = 8
+    #: mid-game Monte Carlo (see pimc.py) before the endgame search applies: deals kept
+    #: per decision (0 turns it off), deals drawn before weighing, at most this many
+    #: candidate moves, the average result a candidate must gain over the rule move, and
+    #: the time limit for one decision
+    PIMC_SAMPLES = 32
+    PIMC_POOL = 48
+    PIMC_CANDS = 6
+    PIMC_MARGIN = 0.1
+    PIMC_BUDGET_S = 1.5
+    #: score rollouts by win / loss only (bombs and springs make the stake too noisy)
+    PIMC_WIN_ONLY = True
+    #: deal weighing: logistic width around the bid thresholds (0: ignore bids), and the
+    #: weight per pass made while holding a non-bomb answer (1: ignore passes)
+    PIMC_BID_TEMP = 1.0
+    PIMC_PASS_WEIGHT = 1.0
 
     # ------------------------------------------------------------------ bidding
     @staticmethod
     def strength(hand: Sequence[str]) -> float:
         """Higher is stronger: control cards minus how many weak groups the hand has."""
-        c = rank_counts(hand)
-        cost, groups = decompose(tuple(c))
-        ctrl = 2 * c[RANK_RJ] + 1.5 * c[RANK_BJ] + c[RANK_2] + 0.5 * c[RANK_A]
-        ctrl += 2 * sum(1 for g in groups if g.type == "bomb")
-        ctrl += 2 * sum(1 for g in groups if g.type == "rocket")
-        return ctrl - cost
+        return _strength(tuple(rank_counts(hand)))
+
+    def win_chance(self, hand: Sequence[str]) -> float:
+        """Estimated chance that ``hand`` (17 cards) wins as landlord."""
+        w = self.BID_MODEL
+        z = w[0] + sum(a * b for a, b in zip(w[1:], bid_features(hand)))
+        return 1 / (1 + math.exp(-z))
 
     def on_bid(self, state: GameState) -> int:
+        if self.BID_BY_WIN and self.BID_MODEL:
+            p = self.win_chance(state.hand)
+            raised = any((b.get("score") or 0) > 0 for b in state.bids)
+            for bid, cut in self.BID_WIN_CUTS:
+                if p >= cut + (self.BID_RAISE if raised else 0):
+                    return bid if bid > state.high_bid else 0
+            return 0
         s = self.strength(state.hand)
         for bid, threshold in self.BID_THRESHOLDS:
             if s >= threshold:
@@ -298,6 +343,17 @@ class Smart3Bot(Bot):
         return 0
 
     # ------------------------------------------------------------------ playing
+    def rule_move(self, state: GameState) -> Optional[Move]:
+        """The move by rules alone (None = pass); also the policy for Monte Carlo rollouts."""
+        moves = state.legal_moves()
+        if not moves:
+            return None
+        for m in moves:
+            if len(m.cards) == len(state.hand):
+                return m
+        ctx = _Ctx(self, state)
+        return (ctx.lead() if state.leading else ctx.follow(moves)) or None
+
     def on_play(self, state: GameState):
         moves = state.legal_moves()
         if not moves:
@@ -307,14 +363,10 @@ class Smart3Bot(Bot):
                 return m
         ctx = _Ctx(self, state)
         rule = ctx.lead() if state.leading else ctx.follow(moves)
+        seed = "%s|%s|%d" % (state.game_id, ",".join(state.hand), len(state.history))
         if self.ENDGAME_TOTAL and endgame.applies(
             state, self.ENDGAME_TOTAL, self.ENDGAME_SHORT
         ):
-            seed = "%s|%s|%d" % (
-                state.game_id,
-                ",".join(state.hand),
-                len(state.history),
-            )
             return endgame.choose(
                 state,
                 rule,
@@ -323,7 +375,85 @@ class Smart3Bot(Bot):
                 random.Random(seed),
                 self.ENDGAME_PASS_WEIGHT,
             )
+        if self.PIMC_SAMPLES > 0:
+            return self.monte_carlo(state, ctx, rule or None, random.Random(seed)) or []
         return rule
+
+    def monte_carlo(
+        self, st: GameState, ctx: "_Ctx", rule: Optional[Move], rng: random.Random
+    ) -> Optional[Move]:
+        """Pick among a few candidate moves by weighted sampled rollouts (pimc.py)."""
+        deadline = time.time() + self.PIMC_BUDGET_S
+        cands = ctx.candidates(self.PIMC_CANDS)
+        if len(cands) <= 1:
+            return rule
+        evidence = endgame.pass_evidence(st) if self.PIMC_PASS_WEIGHT < 1 else []
+        deals = pimc.draw(
+            st,
+            rng,
+            self.PIMC_POOL,
+            self.PIMC_SAMPLES,
+            lambda hands: pimc.weight(
+                st,
+                hands,
+                self.strength,
+                self.BID_THRESHOLDS,
+                self.PIMC_BID_TEMP,
+                evidence,
+                self.PIMC_PASS_WEIGHT,
+            ),
+        )
+        return pimc.choose(
+            st,
+            rule,
+            cands,
+            self.rule_move,
+            deals,
+            self.PIMC_MARGIN,
+            deadline,
+            self.PIMC_WIN_ONLY,
+        )
+
+
+#: features of a 17-card hand for the landlord win model (see ddz3_bidfit.py)
+BID_FEATURES = (
+    "split cost",
+    "groups",
+    "red joker",
+    "black joker",
+    "twos",
+    "aces",
+    "kings",
+    "bombs",
+    "rocket",
+)
+
+
+def bid_features(hand: Sequence[str]) -> List[float]:
+    c = rank_counts(hand)
+    cost, groups = decompose(tuple(c))
+    bombs = sum(1 for g in groups if g.type == "bomb")
+    rocket = sum(1 for g in groups if g.type == "rocket")
+    return [
+        cost,
+        len(groups) - bombs - rocket,
+        c[RANK_RJ],
+        c[RANK_BJ],
+        c[RANK_2],
+        c[RANK_A],
+        c[RANK_A - 1],
+        bombs,
+        rocket,
+    ]
+
+
+@lru_cache(maxsize=20_000)
+def _strength(c: Tuple[int, ...]) -> float:
+    cost, groups = decompose(c)
+    ctrl = 2 * c[RANK_RJ] + 1.5 * c[RANK_BJ] + c[RANK_2] + 0.5 * c[RANK_A]
+    ctrl += 2 * sum(1 for g in groups if g.type == "bomb")
+    ctrl += 2 * sum(1 for g in groups if g.type == "rocket")
+    return ctrl - cost
 
 
 class _Ctx:
@@ -403,6 +533,35 @@ class _Ctx:
             ways = sum(comb(self.unseen[r], 2) for r in higher if r < RANK_BJ)
             return min(1.0, ways * comb(k, 2) / comb(total, 2))
         return 1.0 if can_beat_with(g, self.unseen, k) else 0.0
+
+    def candidates(self, limit: int) -> List[Optional[Move]]:
+        """A few sensible moves for Monte Carlo to compare (None = pass): when leading,
+        each non-bomb group of the split, lowest first; when following, passing, the
+        moves that damage the split least and the smallest bomb."""
+        st = self.st
+        if st.leading:
+            normal = sorted(
+                (g for g in self.groups if g.type not in BOMBS),
+                key=lambda g: (g.top, -g.size),
+            )
+            return [self.to_move(g) for g in normal[:limit]]
+        moves = st.legal_moves()
+        normal = [m for m in moves if m.pattern.type not in BOMBS]
+        normal.sort(key=lambda m: (m.pattern.main, sum(rank_of(c) for c in m.cards)))
+        scored = sorted(
+            (
+                (self.after(m)[0], m.pattern.main, i, m)
+                for i, m in enumerate(normal[:60])
+            ),
+        )
+        out: List[Optional[Move]] = [None] if st.can_pass else []
+        out += [m for _, _, _, m in scored[: max(0, limit - 2)]]
+        bombs = sorted(
+            (m for m in moves if m.pattern.type in BOMBS),
+            key=lambda m: (m.pattern.type == "rocket", len(m.cards), m.pattern.main),
+        )
+        out += bombs[:1]
+        return out[:limit]
 
     # ---- leading
     def lead(self) -> Move:

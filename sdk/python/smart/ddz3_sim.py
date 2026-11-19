@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import functools
 import random
 import statistics
@@ -288,7 +289,7 @@ def make_factory(name: str) -> Callable[[], Any]:
         base, _, spec = name.partition(":")
         cls = make_factory(base)
         overrides: Dict[str, Any] = {}
-        for item in spec.split(","):
+        for item in _top_level_split(spec):
             k, _, v = item.partition("=")
             k = k.strip()
             if not hasattr(cls, k):
@@ -310,13 +311,28 @@ def make_factory(name: str) -> Callable[[], Any]:
     raise SystemExit("unknown bot %r" % name)
 
 
+def _top_level_split(spec: str) -> List[str]:
+    """Split ``A=1,B=(1, 2)`` on the commas outside brackets."""
+    out, depth, cur = [], 0, ""
+    for ch in spec:
+        depth += ch in "([" and 1 or ch in ")]" and -1 or 0
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur]
+
+
 def _literal(v: str) -> Any:
-    for conv in (int, float):
-        try:
-            return conv(v)
-        except ValueError:
-            pass
-    return {"true": True, "false": False}.get(v.lower(), v)
+    """A Python literal (number, tuple, ...), true / false, or else the string itself."""
+    low = {"true": True, "false": False}
+    if v.lower() in low:
+        return low[v.lower()]
+    try:
+        return ast.literal_eval(v)
+    except (ValueError, SyntaxError):
+        return v
 
 
 def main() -> None:

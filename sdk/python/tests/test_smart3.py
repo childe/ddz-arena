@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "smart"))
 from ddz3_sim import duplicate, make_factory, play_game  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
+import pimc  # noqa: E402
 from smart3_bot import Smart3Bot, decompose  # noqa: E402
 
 from ddz_sdk import GameState  # noqa: E402
@@ -38,10 +39,14 @@ def test_decompose_rocket_and_plane():
     assert ("plane_single", 0, 2) in got
 
 
+class RulesOnly(Smart3Bot):
+    PIMC_SAMPLES = 0
+
+
 def test_games_are_legal_and_finish():
     stats = {}
     for seed in range(30):
-        bots = [Smart3Bot(), GreedyBot(), RandomBot(seed=seed)]
+        bots = [RulesOnly(), GreedyBot(), RandomBot(seed=seed)]
         r = play_game(bots, seed, stats=stats)
         assert sum(r["scores"]) == 0
     assert stats == {}
@@ -93,7 +98,7 @@ def test_beats_landlord_close_to_out():
 
 
 def test_duplicate_beats_random():
-    res = duplicate(Smart3Bot, RandomBot, range(5))
+    res = duplicate(RulesOnly, RandomBot, range(5))
     assert res["games"] == 15
     assert res["unit_edge"] > 0
 
@@ -152,9 +157,60 @@ def test_endgame_search_finds_the_winning_lead():
     class Rules(Smart3Bot):
         KEEP_BOSS = False
         ENDGAME_TOTAL = 0
+        PIMC_SAMPLES = 0
 
     class Search(Smart3Bot):
         KEEP_BOSS = False
 
     assert Rules().on_play(st).cards == ["BJ"]
     assert Search().on_play(st).cards in (["8S"], ["AS"])
+
+
+def test_bid_by_win_chance():
+    bot = Smart3Bot()
+    strong = parse_short("2222AAKKQ3456789") + ["RJ"]
+    weak = parse_short("33445667899TJQKA5")
+    assert bot.win_chance(strong) > 0.8 > 0.3 > bot.win_chance(weak)
+    st = GameState(game="ddz", seat=0, hand=strong, phase="bidding")
+    assert bot.on_bid(st) == 3
+    st = GameState(game="ddz", seat=0, hand=weak, phase="bidding")
+    assert bot.on_bid(st) == 0
+
+
+def test_rollout_finishes_the_game():
+    # Seat 1 can go out at once by leading its pair; any other lead gives the game away.
+    st = GameState(
+        game="ddz",
+        seat=1,
+        hand=parse_short("KK"),
+        phase="playing",
+        landlord=0,
+        to_beat=None,
+        can_pass=False,
+        cards_left=[1, 2, 5],
+        history=[],
+    )
+    hands = (("2S",), tuple(st.hand), tuple(parse_short("34567")))
+    pair, single = None, None
+    for m in st.legal_moves():
+        if m.pattern.type == "pair":
+            pair = m
+        else:
+            single = m
+    rule = Smart3Bot().rule_move
+    assert pimc.rollout(st, hands, pair, rule, win_only=True) == 1
+    assert pimc.rollout(st, hands, single, rule, win_only=True) == -1
+    # Landlord-side stake: a farmer win against a bid of 1 with no bombs is +1.
+    assert pimc.rollout(st, hands, pair, rule) == 1
+
+
+def test_monte_carlo_keeps_games_legal():
+    class Quick(Smart3Bot):
+        PIMC_SAMPLES = 4
+        PIMC_POOL = 8
+
+    stats = {}
+    for seed in range(4):
+        r = play_game([Quick(), Smart3Bot(), GreedyBot()], seed, stats=stats)
+        assert sum(r["scores"]) == 0
+    assert stats == {}
