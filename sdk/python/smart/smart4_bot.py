@@ -89,19 +89,59 @@ class Group:
 CHAIN_TYPES = ("straight", "pair_chain", "plane", "plane_single", "plane_pair")
 
 
-def group_cost(g: Group) -> float:
+#: cost parameters (see :func:`group_cost`): rank where groups start to gain control,
+#: ranks over which they reach full control, extra cost per rank below the start, cost
+#: cut per chain rank beyond the minimum length, and the cost of a 4-card bomb (0.15
+#: less per extra card)
+CostParams = Tuple[float, float, float, float, float]
+DEFAULT_COST: CostParams = (8, 6, 0.0, 0.0, -0.6)
+#: (effective rank per rank for groups of 1, 2 and 3 cards per rank, or None for the
+#: ranks themselves; cost parameters)
+CostCfg = Tuple[Optional[Tuple[Tuple[float, ...], ...]], CostParams]
+STATIC: CostCfg = (None, DEFAULT_COST)
+WIDTH = {"straight": 1, "pair_chain": 2, "plane": 3, "plane_single": 3, "plane_pair": 3}
+WIDTH.update(single=1, pair=2, triple=3, triple_single=3, triple_pair=3)
+MIN_LEN = {"straight": 5, "pair_chain": 3}
+MIN_LEN.update(plane=2, plane_single=2, plane_pair=2)
+
+
+def effective_ranks(
+    unseen: Sequence[int], shift: float = 1.0
+) -> Tuple[Tuple[float, ...], ...]:
+    """Per group width w (1-3 cards per rank): each rank moved up by the number of higher
+    ranks no opponent can hold w of (all of them played or in our hand). A single K with
+    every A, 2 and joker gone then counts like the big joker. ``shift`` scales the move.
+    """
+    out = []
+    for w in (1, 2, 3):
+        eff, gone = [0.0] * len(unseen), 0
+        for r in range(len(unseen) - 1, -1, -1):
+            eff[r] = r + shift * gone
+            gone += unseen[r] < w
+        out.append(tuple(eff))
+    return tuple(out)
+
+
+def group_cost(g: Group, cfg: CostCfg = STATIC) -> float:
     """Cost of having to play ``g``: 1 for a weak group, less for strong ones, <0 for bombs."""
+    eff, (knee, span, low, chain_len, bomb) = cfg
     if g.type == "rocket":
         return -1.2
     if g.type == "bomb":
-        return -0.6 - 0.15 * (g.length - 4)
+        return bomb - 0.15 * (g.length - 4)
+    top = eff[WIDTH[g.type] - 1][g.top] if eff else g.top
+    below = low * max(0.0, knee - top) / knee
     if g.type in CHAIN_TYPES:
-        return 1.0 - 0.6 * min(1.0, max(0.0, (g.top - 8) / 3))
-    return 1.0 - min(1.0, max(0.0, (g.main - 8) / 6))
+        base = 1.0 - 0.6 * min(1.0, max(0.0, (top - 8) / 3))
+        base -= chain_len * (g.length - MIN_LEN[g.type])
+        return max(0.2, base) + below
+    return 1.0 - min(1.0, max(0.0, (top - knee) / span)) + below
 
 
 # ---------------------------------------------------------------- decomposition
-def decompose(counts: Sequence[int]) -> Tuple[float, Tuple[Group, ...]]:
+def decompose(
+    counts: Sequence[int], cfg: CostCfg = STATIC
+) -> Tuple[float, Tuple[Group, ...]]:
     """Lowest-cost split of a hand given as ``rank_counts``."""
     c = list(counts)
     fixed: List[Group] = []
@@ -112,17 +152,20 @@ def decompose(counts: Sequence[int]) -> Tuple[float, Tuple[Group, ...]]:
         if c[r] >= 4:
             fixed.append(Group("bomb", r, c[r], (r,) * c[r]))
             c[r] = 0
-    cost, groups = _search(tuple(c), (-1, -1, -1), ())
-    return cost + sum(group_cost(g) for g in fixed), tuple(fixed) + groups
+    cost, groups = _search(tuple(c), (-1, -1, -1), (), cfg)
+    return cost + sum(group_cost(g, cfg) for g in fixed), tuple(fixed) + groups
 
 
 # Kept small: an entry costs ~1.5 KB and few hits come from earlier decisions.
 @lru_cache(maxsize=20_000)
 def _search(
-    c: Tuple[int, ...], after: Tuple[int, int, int], planes: Tuple[Tuple[int, int], ...]
+    c: Tuple[int, ...],
+    after: Tuple[int, int, int],
+    planes: Tuple[Tuple[int, int], ...],
+    cfg: CostCfg = STATIC,
 ) -> Tuple[float, Tuple[Group, ...]]:
     """Choose chains (in canonical order ``> after``), then group the rest in :func:`_leaf`."""
-    best = _leaf(c, planes)
+    best = _leaf(c, planes, cfg)
     for ti, (t, need, min_len) in enumerate(CHAINS):
         for s in range(RANK_A + 1):
             ln = 0
@@ -135,7 +178,10 @@ def _search(
                     rest[r] -= need
                 if t == "plane":
                     sub_cost, sub = _search(
-                        tuple(rest), (ti, s, ln), tuple(sorted(planes + ((s, ln),)))
+                        tuple(rest),
+                        (ti, s, ln),
+                        tuple(sorted(planes + ((s, ln),))),
+                        cfg,
                     )
                     cand = (sub_cost, sub)
                 else:
@@ -145,15 +191,15 @@ def _search(
                         ln,
                         tuple(r for r in range(s, s + ln) for _ in range(need)),
                     )
-                    sub_cost, sub = _search(tuple(rest), (ti, s, ln), planes)
-                    cand = (sub_cost + group_cost(g), sub + (g,))
+                    sub_cost, sub = _search(tuple(rest), (ti, s, ln), planes, cfg)
+                    cand = (sub_cost + group_cost(g, cfg), sub + (g,))
                 if cand[0] < best[0] - 1e-9:
                     best = cand
     return best
 
 
 def _leaf(
-    c: Tuple[int, ...], planes: Tuple[Tuple[int, int], ...]
+    c: Tuple[int, ...], planes: Tuple[Tuple[int, int], ...], cfg: CostCfg = STATIC
 ) -> Tuple[float, Tuple[Group, ...]]:
     """Group leftover ranks (counts <= 3) into triples/pairs/singles and attach kickers."""
     singles = [r for r in range(len(c)) if c[r] == 1]
@@ -203,7 +249,7 @@ def _leaf(
             groups.append(Group("triple", t, 1, (t, t, t)))
     groups += [Group("pair", r, 1, (r, r)) for r in pairs]
     groups += [Group("single", r, 1, (r,)) for r in singles]
-    return sum(group_cost(g) for g in groups), tuple(groups)
+    return sum(group_cost(g, cfg) for g in groups), tuple(groups)
 
 
 def hand_cost(counts: Sequence[int]) -> float:
@@ -286,6 +332,11 @@ class Smart4Bot(Bot):
     LEAD_GUARD = 5
     #: in that case keep bosses for later and lead the weak group least likely to be beaten
     KEEP_BOSS = True
+    #: split cost while playing (see :func:`group_cost`): move each group's rank up by
+    #: this much per higher rank the opponents cannot hold (:func:`effective_ranks`; 0:
+    #: off), and the cost parameters
+    DYN_COST = 0.5
+    COST_PARAMS: CostParams = (8, 8, 0.0, 0.0, -0.6)
     #: endgame search (see endgame.py) once all hands hold <= ENDGAME_TOTAL cards and
     #: someone has <= ENDGAME_SHORT; 0 turns it off
     ENDGAME_TOTAL = 32
@@ -477,7 +528,11 @@ class _Ctx:
             self.mates = st.teammates()
         self.opp_min = min(self.left[s] for s in self.opps)
         self.opp_max = max(self.left[s] for s in self.opps)
-        self.cost, self.groups = decompose(tuple(self.counts))
+        self.cfg: CostCfg = (
+            effective_ranks(self.unseen, bot.DYN_COST) if bot.DYN_COST else None,
+            tuple(bot.COST_PARAMS),
+        )
+        self.cost, self.groups = decompose(tuple(self.counts), self.cfg)
 
     # ---- helpers
     def is_boss(self, g: Group) -> bool:
@@ -509,7 +564,7 @@ class _Ctx:
         c = list(self.counts)
         for card in m.cards:
             c[rank_of(card)] -= 1
-        return decompose(tuple(c))
+        return decompose(tuple(c), self.cfg)
 
     def can_finish(self, groups: Sequence[Group]) -> bool:
         """At most one group is not a boss: lead the bosses, then the last group."""

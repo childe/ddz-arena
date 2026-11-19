@@ -11,7 +11,13 @@ from ddz3_sim import duplicate, make_factory, play_game  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
 import pimc  # noqa: E402
-from smart3_bot import Smart3Bot, decompose  # noqa: E402
+from smart3_bot import (
+    Group,
+    Smart3Bot,
+    decompose,
+    effective_ranks,
+    group_cost,
+)  # noqa: E402
 
 from ddz_sdk import GameState  # noqa: E402
 from ddz_sdk.cards import parse_short, rank_counts  # noqa: E402
@@ -214,3 +220,16 @@ def test_monte_carlo_keeps_games_legal():
         r = play_game([Quick(), Smart3Bot(), GreedyBot()], seed, stats=stats)
         assert sum(r["scores"]) == 0
     assert stats == {}
+
+
+def test_effective_ranks_follow_the_unseen_cards():
+    # Every A, 2 and joker is gone (played or ours): a single K is as good as the big joker.
+    unseen = [4] * 11 + [0, 0, 0, 0]
+    eff = effective_ranks(unseen)
+    assert eff[0][10] == 14 and eff[0][9] == 13
+    k = Group("single", 10, 1, (10,))
+    params = (8, 6, 0.0, 0.0, -0.8)
+    assert group_cost(k, (eff, params)) == 0.0 < group_cost(k, (None, params))
+    # Half the move with shift 0.5; no pair of jokers exists, so pairs of 2 always top out.
+    assert effective_ranks(unseen, 0.5)[0][10] == 12
+    assert effective_ranks([4] * 13 + [1, 1])[1][12] == 14
