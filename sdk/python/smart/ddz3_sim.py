@@ -10,20 +10,25 @@ Duplicate evaluation removes most of the luck of the deal: every deal is played 
 three baseline bots, then three more times with the candidate bot in seat 0, 1 and 2. The
 candidate's edge on that deal is its score minus the baseline's score from the same seat.
 
+A bot is named ``smart3``, ``greedy`` or ``random``; ``smart3:NAME=value,...`` sets class
+attributes on the smart bot, so a strategy switch can be measured against the bot without it.
+
 Usage:
     python smart/ddz3_sim.py --deals 500                     # smart3 vs greedy
     python smart/ddz3_sim.py --deals 500 --bot greedy --baseline random
+    python smart/ddz3_sim.py --deals 2000 --jobs 8 --bot "smart3:ENDGAME_TOTAL=0" --baseline smart3
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import random
 import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
@@ -180,39 +185,76 @@ def play_game(
     }
 
 
+def deal_edge(
+    make_bot: Callable[[], Any], make_base: Callable[[], Any], seed: int
+) -> Dict[str, Any]:
+    """One deal of the duplicate evaluation: the candidate's edge in each seat."""
+    stats: Dict[str, int] = {}
+    base = play_game([make_base() for _ in range(N)], seed, stats=stats)
+    diffs: List[float] = []
+    units: List[float] = []
+    sides: List[Tuple[str, int]] = []  # (landlord | farmer, score) per seat that played
+    for seat in range(N):
+        bots = [make_base() for _ in range(N)]
+        bots[seat] = make_bot()
+        r = play_game(bots, seed, stats=stats)
+        diffs.append(r["scores"][seat] - base["scores"][seat])
+        units.append(_units(r, seat) - _units(base, seat))
+        if r["kind"] == "win":
+            role = "landlord" if r["landlord"] == seat else "farmer"
+            sides.append((role, r["scores"][seat]))
+    return {"diffs": diffs, "units": units, "sides": sides, "stats": stats}
+
+
+def _deal_edge(args):
+    return deal_edge(*args)
+
+
 def duplicate(
     make_bot: Callable[[], Any],
     make_base: Callable[[], Any],
     seeds: Sequence[int],
     progress: bool = False,
+    jobs: int = 1,
 ) -> Dict[str, Any]:
-    """Duplicate evaluation of ``make_bot`` against ``make_base`` (see the module docstring)."""
+    """Duplicate evaluation of ``make_bot`` against ``make_base`` (see the module docstring);
+    ``jobs > 1`` plays deals in worker processes (the factories must then be picklable).
+    """
     stats: Dict[str, int] = {}
     diffs: List[float] = []
     units: List[float] = []
     ll = {"games": 0, "wins": 0, "score": 0}
     fa = {"games": 0, "wins": 0, "score": 0}
     t0 = time.time()
-    for n, seed in enumerate(seeds):
-        base = play_game([make_base() for _ in range(N)], seed, stats=stats)
-        for seat in range(N):
-            bots = [make_base() for _ in range(N)]
-            bots[seat] = make_bot()
-            r = play_game(bots, seed, stats=stats)
-            diffs.append(r["scores"][seat] - base["scores"][seat])
-            units.append(_units(r, seat) - _units(base, seat))
-            if r["kind"] != "win":
-                continue
-            side = ll if r["landlord"] == seat else fa
-            side["games"] += 1
-            side["score"] += r["scores"][seat]
-            side["wins"] += r["scores"][seat] > 0
-        if progress and (n + 1) % 50 == 0:
-            print(
-                "  %d deals, edge %.3f/game, %.0fs"
-                % (n + 1, statistics.mean(diffs), time.time() - t0),
-                flush=True,
-            )
+    tasks = [(make_bot, make_base, seed) for seed in seeds]
+    if jobs > 1:
+        import multiprocessing
+
+        pool = multiprocessing.Pool(jobs)
+        results = pool.imap(_deal_edge, tasks)
+    else:
+        pool = None
+        results = map(_deal_edge, tasks)
+    try:
+        for n, r in enumerate(results):
+            diffs += r["diffs"]
+            units += r["units"]
+            for role, score in r["sides"]:
+                side = ll if role == "landlord" else fa
+                side["games"] += 1
+                side["score"] += score
+                side["wins"] += score > 0
+            for k, v in r["stats"].items():
+                stats[k] = stats.get(k, 0) + v
+            if progress and (n + 1) % 50 == 0:
+                print(
+                    "  %d deals, edge %.3f/game, %.0fs"
+                    % (n + 1, statistics.mean(diffs), time.time() - t0),
+                    flush=True,
+                )
+    finally:
+        if pool is not None:
+            pool.close()
     return {
         "games": len(diffs),
         "edge": statistics.mean(diffs),
@@ -222,6 +264,7 @@ def duplicate(
         "landlord": ll,
         "farmer": fa,
         "stats": stats,
+        "seconds": time.time() - t0,
     }
 
 
@@ -232,7 +275,26 @@ def _units(r: Dict[str, Any], seat: int) -> int:
     return w if sc > 0 else -w if sc < 0 else 0
 
 
+def _variant(cls: type, overrides: Dict[str, Any]) -> Any:
+    bot = cls()
+    for k, v in overrides.items():
+        setattr(bot, k, v)
+    return bot
+
+
 def make_factory(name: str) -> Callable[[], Any]:
+    """A bot by name; ``smart3:A=1,B=0.5`` sets attributes A and B on each new bot."""
+    if ":" in name:
+        base, _, spec = name.partition(":")
+        cls = make_factory(base)
+        overrides: Dict[str, Any] = {}
+        for item in spec.split(","):
+            k, _, v = item.partition("=")
+            k = k.strip()
+            if not hasattr(cls, k):
+                raise SystemExit("%s has no attribute %r" % (base, k))
+            overrides[k] = _literal(v.strip())
+        return functools.partial(_variant, cls, overrides)
     if name == "smart3":
         from smart3_bot import Smart3Bot
 
@@ -248,22 +310,40 @@ def make_factory(name: str) -> Callable[[], Any]:
     raise SystemExit("unknown bot %r" % name)
 
 
+def _literal(v: str) -> Any:
+    for conv in (int, float):
+        try:
+            return conv(v)
+        except ValueError:
+            pass
+    return {"true": True, "false": False}.get(v.lower(), v)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bot", default="smart3")
     ap.add_argument("--baseline", default="greedy")
     ap.add_argument("--deals", type=int, default=200)
     ap.add_argument("--start", type=int, default=0, help="first deal number")
+    ap.add_argument("--jobs", type=int, default=1, help="worker processes")
     args = ap.parse_args()
     res = duplicate(
         make_factory(args.bot),
         make_factory(args.baseline),
         range(args.start, args.start + args.deals),
         progress=True,
+        jobs=args.jobs,
     )
     print(
-        "%s vs %s: %d games, edge %.3f ± %.3f per game"
-        % (args.bot, args.baseline, res["games"], res["edge"], res["stderr"])
+        "%s vs %s: %d games, edge %.3f ± %.3f per game, %.0fs"
+        % (
+            args.bot,
+            args.baseline,
+            res["games"],
+            res["edge"],
+            res["stderr"],
+            res["seconds"],
+        )
     )
     print(
         "  win/loss only (landlord +-2, farmer +-1): edge %.3f ± %.3f per game"

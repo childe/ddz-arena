@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "smart"))
 
-from ddz3_sim import duplicate, play_game  # noqa: E402
+from ddz3_sim import duplicate, make_factory, play_game  # noqa: E402
 from greedy_bot import GreedyBot  # noqa: E402
 from random_bot import RandomBot  # noqa: E402
 from smart3_bot import Smart3Bot, decompose  # noqa: E402
@@ -96,6 +96,15 @@ def test_duplicate_beats_random():
     res = duplicate(Smart3Bot, RandomBot, range(5))
     assert res["games"] == 15
     assert res["unit_edge"] > 0
+
+
+def test_variant_sets_attributes_and_runs_in_workers():
+    make = make_factory("smart3:LEAD_GUARD=0,KEEP_BOSS=false,BOMB_REST_COST=0.5")
+    bot = make()
+    assert (bot.LEAD_GUARD, bot.KEEP_BOSS, bot.BOMB_REST_COST) == (0, False, 0.5)
+    assert Smart3Bot.LEAD_GUARD == 2  # the class itself is unchanged
+    res = duplicate(make, make_factory("smart3"), range(2), jobs=2)
+    assert res["games"] == 6
 
 
 def test_keeps_boss_when_landlord_is_close_to_out():
